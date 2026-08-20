@@ -1,40 +1,13 @@
 import streamlit as st
-import sqlite3
-import hashlib
-
-
-# =========================================================
-# إعداد الصفحة
-# =========================================================
 
 st.set_page_config(
     page_title="Teacher System",
-    page_icon="🎓",
-    layout="wide",
-    initial_sidebar_state="collapsed",
+    page_icon="🎓"
 )
 
-
-# =========================================================
-# قاعدة البيانات
-# =========================================================
-
-DB_NAME = "teacher_system.db"
-
-
-def get_connection():
-    return sqlite3.connect(
-        DB_NAME,
-        check_same_thread=False
-    )
-
-
-def hash_password(password):
-    return hashlib.sha256(
-        password.encode("utf-8")
-    ).hexdigest()
-
-
+st.title("🎓 Teacher System")
+st.success("✅ التطبيق شغال بنجاح!")
+st.write("Yosef AI")
 def init_database():
 
     conn = get_connection()
