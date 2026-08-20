@@ -2585,7 +2585,7 @@ def analytics():
                     absent,
                 )
 
-                                c4.metric(
+                                                c4.metric(
                     "📈 النسبة",
                     f"{percentage:.1f}%",
                 )
