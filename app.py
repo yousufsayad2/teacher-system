@@ -1,2148 +1,760 @@
-import streamlit as st
-import sqlite3
-import qrcode
-import cv2
-import numpy as np
-import io
-import secrets
-import re
-from pathlib import Path
-from datetime import datetime
-from urllib.parse import urlparse, parse_qs, unquote
-
-
-# =========================================================
-# CONFIG
-# =========================================================
-
-APP_DIR = Path(__file__).resolve().parent
-DB_FILE = APP_DIR / "attendance_platform.db"
-
-TEACHER_PASSWORD = "1234"
-
-GROUPS = [
-    "المجموعة 1",
-    "المجموعة 2",
-    "المجموعة 3",
-]
-
-GROUP_LIMIT = 70
-
-GRADES = [
-    "الصف الأول الإعدادي",
-    "الصف الثاني الإعدادي",
-    "الصف الثالث الإعدادي",
-    "الصف الأول الثانوي",
-    "الصف الثاني الثانوي",
-    "الصف الثالث الثانوي",
-]
-
-
-# =========================================================
-# STREAMLIT CONFIG
-# =========================================================
-
-st.set_page_config(
-    page_title="منصة الحضور",
-    page_icon="🎓",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
-
-# =========================================================
-# STYLE
-# =========================================================
-
-st.markdown(
-    """
-    <style>
-
-    .block-container {
-        max-width: 1100px;
-        padding-top: 25px;
-        padding-bottom: 50px;
-    }
-
-    .main-title {
-        text-align: center;
-        font-size: 48px;
-        font-weight: bold;
-        margin-bottom: 5px;
-    }
-
-    .sub-title {
-        text-align: center;
-        font-size: 26px;
-        margin-bottom: 30px;
-    }
-
-    div.stButton > button {
-        min-height: 48px;
-        font-size: 18px;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-
-# =========================================================
-# DATABASE
-# =========================================================
-
-def get_connection():
-    """
-    إنشاء اتصال SQLite بشكل آمن نسبيًا مع Streamlit.
-    """
-
-    conn = sqlite3.connect(
-        str(DB_FILE),
-        timeout=60,
-        check_same_thread=False,
-    )
-
-    conn.row_factory = sqlite3.Row
-
-    # تحسين التعامل مع تعدد الاتصالات
-    conn.execute("PRAGMA busy_timeout = 60000")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA synchronous = NORMAL")
-
-    return conn
-
-
-def init_db():
-    """
-    إنشاء قاعدة البيانات والجداول والفهارس.
-    """
-
-    conn = get_connection()
-
-    try:
-
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS students (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                phone TEXT NOT NULL UNIQUE,
-                parent_phone TEXT DEFAULT '',
-                grade TEXT NOT NULL,
-                group_name TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS lessons (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                lesson_name TEXT NOT NULL,
-                grade TEXT NOT NULL,
-                group_name TEXT NOT NULL,
-                token TEXT NOT NULL UNIQUE,
-                created_at TEXT NOT NULL,
-                ended_at TEXT,
-                active INTEGER NOT NULL DEFAULT 1
-            );
-
-            CREATE TABLE IF NOT EXISTS lesson_students (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                lesson_id INTEGER NOT NULL,
-                student_id INTEGER NOT NULL,
-                UNIQUE(lesson_id, student_id),
-                FOREIGN KEY(lesson_id)
-                    REFERENCES lessons(id)
-                    ON DELETE CASCADE,
-                FOREIGN KEY(student_id)
-                    REFERENCES students(id)
-                    ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS attendance (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                lesson_id INTEGER NOT NULL,
-                student_id INTEGER NOT NULL,
-                marked_at TEXT NOT NULL,
-                UNIQUE(lesson_id, student_id),
-                FOREIGN KEY(lesson_id)
-                    REFERENCES lessons(id)
-                    ON DELETE CASCADE,
-                FOREIGN KEY(student_id)
-                    REFERENCES students(id)
-                    ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_students_grade_group
-            ON students(grade, group_name);
-
-            CREATE INDEX IF NOT EXISTS idx_lessons_grade_group
-            ON lessons(grade, group_name);
-
-            CREATE INDEX IF NOT EXISTS idx_lessons_active
-            ON lessons(active);
-
-            CREATE INDEX IF NOT EXISTS idx_attendance_lesson
-            ON attendance(lesson_id);
-
-            CREATE INDEX IF NOT EXISTS idx_lesson_students_lesson
-            ON lesson_students(lesson_id);
-
-            CREATE INDEX IF NOT EXISTS idx_lesson_students_student
-            ON lesson_students(student_id);
-            """
-        )
-
-        conn.commit()
-
-    finally:
-
-        conn.close()
-
-
-# =========================================================
-# GENERAL HELPERS
-# =========================================================
-
-def now():
-    return datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-
-def clean_phone(value):
-    return re.sub(
-        r"\D",
-        "",
-        value or "",
-    )
-
-
-def page_url():
-    """
-    الحصول على رابط التطبيق الحالي.
-    """
-
-    try:
-        return st.context.url
-    except Exception:
-        return ""
-
-
-def build_base_url():
-    current = page_url()
-
-    if current:
-
-        parsed = urlparse(current)
-
-        return (
-            f"{parsed.scheme}://"
-            f"{parsed.netloc}"
-            f"{parsed.path}"
-        )
-
-    return ""
-
-
-def student_registration_url():
-    base = build_base_url()
-
-    if base:
-        return f"{base}?page=student"
-
-    return "?page=student"
-
-
-def lesson_url(token):
-    base = build_base_url()
-
-    if base:
-        return (
-            f"{base}"
-            f"?page=student"
-            f"&lesson={token}"
-        )
-
-    return f"?page=student&lesson={token}"
-
-
-# =========================================================
-# QR HELPERS
-# =========================================================
-
-def extract_token(value):
-    """
-    استخراج Token من:
-    1- Token فقط
-    2- رابط كامل
-    3- أي نص يحتوي lesson=
-    """
-
-    if not value:
-        return None
-
-    value = str(value).strip()
-
-    # Token فقط
-    if (
-        "://" not in value
-        and "lesson=" not in value
-        and "page=" not in value
-    ):
-        return value
-
-    try:
-
-        parsed = urlparse(value)
-
-        params = parse_qs(
-            parsed.query
-        )
-
-        token_list = params.get(
-            "lesson"
-        )
-
-        if token_list:
-
-            token = unquote(
-                token_list[0]
-            ).strip()
-
-            if token:
-                return token
-
-    except Exception:
-        pass
-
-    match = re.search(
-        r"(?:^|[?&])lesson=([^&\s]+)",
-        value,
-    )
-
-    if match:
-
-        return unquote(
-            match.group(1)
-        ).strip()
-
-    return None
-
-
-def decode_qr(image_bytes):
-    """
-    قراءة QR من صورة الكاميرا.
-    """
-
-    try:
-
-        data = np.frombuffer(
-            image_bytes,
-            dtype=np.uint8,
-        )
-
-        image = cv2.imdecode(
-            data,
-            cv2.IMREAD_COLOR,
-        )
-
-        if image is None:
-            return None
-
-        detector = cv2.QRCodeDetector()
-
-        # -------------------------
-        # 1
-        # -------------------------
-
-        value, points, _ = (
-            detector.detectAndDecode(
-                image
-            )
-        )
-
-        if value:
-            return value.strip()
-
-        # -------------------------
-        # 2 - grayscale
-        # -------------------------
-
-        gray = cv2.cvtColor(
-            image,
-            cv2.COLOR_BGR2GRAY,
-        )
-
-        value, points, _ = (
-            detector.detectAndDecode(
-                gray
-            )
-        )
-
-        if value:
-            return value.strip()
-
-        # -------------------------
-        # 3 - resize
-        # -------------------------
-
-        h, w = gray.shape[:2]
-
-        resized = cv2.resize(
-            gray,
-            (w * 2, h * 2),
-            interpolation=cv2.INTER_CUBIC,
-        )
-
-        value, points, _ = (
-            detector.detectAndDecode(
-                resized
-            )
-        )
-
-        if value:
-            return value.strip()
-
-        # -------------------------
-        # 4 - threshold
-        # -------------------------
-
-        _, threshold = cv2.threshold(
-            gray,
-            0,
-            255,
-            cv2.THRESH_BINARY
-            + cv2.THRESH_OTSU,
-        )
-
-        value, points, _ = (
-            detector.detectAndDecode(
-                threshold
-            )
-        )
-
-        if value:
-            return value.strip()
-
-        # -------------------------
-        # 5 - multi QR
-        # -------------------------
-
-        try:
-
-            ok, values, points, _ = (
-                detector.detectAndDecodeMulti(
-                    image
-                )
-            )
-
-            if ok and values:
-
-                for item in values:
-
-                    if item:
-                        return item.strip()
-
-        except Exception:
-            pass
-
-        return None
-
-    except Exception:
-        return None
-
-
-# =========================================================
-# STUDENTS / GROUPS
-# =========================================================
-
-def group_count(
-    grade,
-    group_name,
-):
-
-    conn = get_connection()
-
-    try:
-
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM students
-            WHERE grade = ?
-            AND group_name = ?
-            """,
-            (
-                grade,
-                group_name,
-            ),
-        ).fetchone()
-
-        return int(
-            row["total"]
-        )
-
-    finally:
-
-        conn.close()
-
-
-def group_is_full(
-    grade,
-    group_name,
-):
-
-    return (
-        group_count(
-            grade,
-            group_name,
-        )
-        >= GROUP_LIMIT
-    )
-
-
-def get_student(student_id):
-
-    conn = get_connection()
-
-    try:
-
-        return conn.execute(
-            """
-            SELECT *
-            FROM students
-            WHERE id = ?
-            """,
-            (student_id,),
-        ).fetchone()
-
-    finally:
-
-        conn.close()
-
-
-# =========================================================
-# LESSONS
-# =========================================================
-
-def get_open_lessons():
-
-    conn = get_connection()
-
-    try:
-
-        return conn.execute(
-            """
-            SELECT *
-            FROM lessons
-            WHERE active = 1
-            ORDER BY id DESC
-            """
-        ).fetchall()
-
-    finally:
-
-        conn.close()
-
-
-def get_open_lesson(
-    grade,
-    group_name,
-):
-
-    conn = get_connection()
-
-    try:
-
-        return conn.execute(
-            """
-            SELECT *
-            FROM lessons
-            WHERE active = 1
-            AND grade = ?
-            AND group_name = ?
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (
-                grade,
-                group_name,
-            ),
-        ).fetchone()
-
-    finally:
-
-        conn.close()
-
-
-def get_lesson_by_token(token):
-
-    conn = get_connection()
-
-    try:
-
-        return conn.execute(
-            """
-            SELECT *
-            FROM lessons
-            WHERE token = ?
-            LIMIT 1
-            """,
-            (token,),
-        ).fetchone()
-
-    finally:
-
-        conn.close()
-
-
-def create_lesson(
-    lesson_name,
-    grade,
-    group_name,
-):
-
-    conn = get_connection()
-
-    try:
-
-        # منع وجود حصتين مفتوحتين لنفس الصف والمجموعة
-        existing = conn.execute(
-            """
-            SELECT id
-            FROM lessons
-            WHERE active = 1
-            AND grade = ?
-            AND group_name = ?
-            LIMIT 1
-            """,
-            (
-                grade,
-                group_name,
-            ),
-        ).fetchone()
-
-        if existing:
-
-            return (
-                False,
-                "توجد حصة مفتوحة بالفعل لهذه المجموعة.",
-            )
-
-        students = conn.execute(
-            """
-            SELECT id
-            FROM students
-            WHERE grade = ?
-            AND group_name = ?
-            ORDER BY id
-            """,
-            (
-                grade,
-                group_name,
-            ),
-        ).fetchall()
-
-        if not students:
-
-            return (
-                False,
-                "لا يوجد طلاب في هذه المجموعة.",
-            )
-
-        token = secrets.token_urlsafe(32)
-
-        cursor = conn.execute(
-            """
-            INSERT INTO lessons
-            (
-                lesson_name,
-                grade,
-                group_name,
-                token,
-                created_at,
-                active
-            )
-            VALUES (?, ?, ?, ?, ?, 1)
-            """,
-            (
-                lesson_name,
-                grade,
-                group_name,
-                token,
-                now(),
-            ),
-        )
-
-        lesson_id = cursor.lastrowid
-
-        for student in students:
-
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO lesson_students
-                (
-                    lesson_id,
-                    student_id
-                )
-                VALUES (?, ?)
-                """,
-                (
-                    lesson_id,
-                    student["id"],
-                ),
-            )
-
-        conn.commit()
-
-        return (
-            True,
-            lesson_id,
-        )
-
-    except sqlite3.OperationalError as e:
-
-        conn.rollback()
-
-        return (
-            False,
-            "مشكلة في قاعدة البيانات: "
-            + str(e),
-        )
-
-    except Exception as e:
-
-        conn.rollback()
-
-        return (
-            False,
-            str(e),
-        )
-
-    finally:
-
-        conn.close()
-
-
-def finish_lesson(lesson_id):
-
-    conn = get_connection()
-
-    try:
-
-        conn.execute(
-            """
-            UPDATE lessons
-            SET active = 0,
-                ended_at = ?
-            WHERE id = ?
-            """,
-            (
-                now(),
-                lesson_id,
-            ),
-        )
-
-        conn.commit()
-
-    finally:
-
-        conn.close()
-
-
-# =========================================================
-# ATTENDANCE
-# =========================================================
-
-def get_lesson_stats(lesson_id):
-
-    conn = get_connection()
-
-    try:
-
-        total = conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM lesson_students
-            WHERE lesson_id = ?
-            """,
-            (lesson_id,),
-        ).fetchone()["total"]
-
-        present = conn.execute(
-            """
-            SELECT COUNT(*) AS total
-            FROM attendance
-            WHERE lesson_id = ?
-            """,
-            (lesson_id,),
-        ).fetchone()["total"]
-
-        absent = total - present
-
-        return (
-            total,
-            present,
-            absent,
-        )
-
-    finally:
-
-        conn.close()
-
-
-def mark_attendance(
-    token,
-    student_id,
-):
-
-    token = extract_token(
-        token
-    )
-
-    if not token:
-
-        return (
-            False,
-            "❌ QR غير صحيح.",
-        )
-
-    conn = get_connection()
-
-    try:
-
-        lesson = conn.execute(
-            """
-            SELECT *
-            FROM lessons
-            WHERE token = ?
-            AND active = 1
-            LIMIT 1
-            """,
-            (token,),
-        ).fetchone()
-
-        if not lesson:
-
-            return (
-                False,
-                "❌ الـQR غير صالح أو الحصة انتهت.",
-            )
-
-        student = conn.execute(
-            """
-            SELECT *
-            FROM students
-            WHERE id = ?
-            """,
-            (student_id,),
-        ).fetchone()
-
-        if not student:
-
-            return (
-                False,
-                "❌ الطالب غير موجود.",
-            )
-
-        # الصف والمجموعة
-        if (
-            student["grade"]
-            != lesson["grade"]
-            or
-            student["group_name"]
-            != lesson["group_name"]
-        ):
-
-            return (
-                False,
-                "❌ هذا الـQR خاص بمجموعة أخرى.",
-            )
-
-        # هل الطالب موجود في كشف الحصة؟
-        registered = conn.execute(
-            """
-            SELECT 1
-            FROM lesson_students
-            WHERE lesson_id = ?
-            AND student_id = ?
-            """,
-            (
-                lesson["id"],
-                student_id,
-            ),
-        ).fetchone()
-
-        if not registered:
-
-            return (
-                False,
-                "❌ الطالب غير موجود في كشف هذه الحصة.",
-            )
-
-        # منع التكرار
-        existing = conn.execute(
-            """
-            SELECT marked_at
-            FROM attendance
-            WHERE lesson_id = ?
-            AND student_id = ?
-            """,
-            (
-                lesson["id"],
-                student_id,
-            ),
-        ).fetchone()
-
-        if existing:
-
-            return (
-                True,
-                "✅ حضورك مسجل بالفعل في "
-                + existing["marked_at"],
-            )
-
-        conn.execute(
-            """
-            INSERT INTO attendance
-            (
-                lesson_id,
-                student_id,
-                marked_at
-            )
-            VALUES (?, ?, ?)
-            """,
-            (
-                lesson["id"],
-                student_id,
-                now(),
-            ),
-        )
-
-        conn.commit()
-
-        return (
-            True,
-            "🎉 تم تسجيل حضورك بنجاح.",
-        )
-
-    except sqlite3.IntegrityError:
-
-        conn.rollback()
-
-        return (
-            True,
-            "✅ حضورك مسجل بالفعل.",
-        )
-
-    except sqlite3.OperationalError as e:
-
-        conn.rollback()
-
-        return (
-            False,
-            "❌ مشكلة في قاعدة البيانات: "
-            + str(e),
-        )
-
-    except Exception as e:
-
-        conn.rollback()
-
-        return (
-            False,
-            "❌ حدث خطأ: "
-            + str(e),
-        )
-
-    finally:
-
-        conn.close()
-
-
-# =========================================================
-# HEADER
-# =========================================================
-
-def show_header(
-    title,
-    subtitle,
-):
-
-    st.markdown(
-        f"""
-        <div class="main-title">
-            {title}
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>منصة الحضور والغياب</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Arial; }
+  body { background: linear-gradient(135deg,#1e3c72,#2a5298); min-height:100vh; color:#fff; padding:20px; }
+  .container { max-width:1100px; margin:auto; background:rgba(255,255,255,0.08); backdrop-filter:blur(10px); border-radius:20px; padding:30px; box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+  h1 { text-align:center; margin-bottom:20px; font-size:2rem; }
+  h2 { margin:15px 0; color:#ffd700; }
+  h3 { color:#ffd700; margin:10px 0; }
+  .btn { background:#ffd700; color:#222; border:none; padding:12px 24px; border-radius:10px; cursor:pointer; font-weight:bold; font-size:1rem; margin:5px; transition:.2s; }
+  .btn:hover { background:#ffec8b; transform:translateY(-2px); }
+  .btn-red { background:#e74c3c; color:#fff; }
+  .btn-green { background:#27ae60; color:#fff; }
+  .btn-blue { background:#3498db; color:#fff; }
+  input, select { width:100%; padding:12px; border-radius:10px; border:none; margin:8px 0; font-size:1rem; background:rgba(255,255,255,0.9); color:#222; }
+  .card { background:rgba(255,255,255,0.12); padding:20px; border-radius:15px; margin:15px 0; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:15px; margin:15px 0; }
+  .stat { background:rgba(255,255,255,0.15); padding:20px; border-radius:12px; text-align:center; }
+  .stat .num { font-size:2.2rem; font-weight:bold; color:#ffd700; }
+  .stat .lbl { font-size:.95rem; margin-top:5px; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; background:rgba(255,255,255,0.9); color:#222; border-radius:10px; overflow:hidden; }
+  th, td { padding:10px; text-align:center; border-bottom:1px solid #ddd; }
+  th { background:#2a5298; color:#fff; }
+  .present { color:#27ae60; font-weight:bold; }
+  .absent { color:#e74c3c; font-weight:bold; }
+  .hidden { display:none !important; }
+  #qrcode { display:flex; justify-content:center; margin:15px 0; }
+  .role-btn { display:block; width:100%; padding:25px; font-size:1.3rem; margin:10px 0; }
+  .alert { padding:12px; border-radius:10px; margin:10px 0; text-align:center; font-weight:bold; }
+  .alert-success { background:#27ae60; }
+  .alert-error { background:#e74c3c; }
+  .alert-info { background:#3498db; }
+  .student-item { display:flex; justify-content:space-between; align-items:center; padding:10px; background:rgba(255,255,255,0.1); border-radius:8px; margin:5px 0; flex-wrap:wrap; gap:10px; }
+  .checkbox-item { display:flex; align-items:center; gap:10px; padding:8px; background:rgba(255,255,255,0.1); border-radius:8px; margin:5px 0; }
+  .checkbox-item input { width:auto; margin:0; }
+  .top-bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:10px; }
+  .badge { display:inline-block; padding:4px 10px; border-radius:20px; font-size:.85rem; background:#ffd700; color:#222; }
+  .day-card { background:rgba(255,255,255,0.1); padding:15px; border-radius:12px; margin:10px 0; border-right:4px solid #ffd700; cursor:pointer; transition:.2s; }
+  .day-card:hover { background:rgba(255,255,255,0.2); }
+  .day-card.today { border-right-color:#27ae60; background:rgba(39,174,96,0.2); }
+  .day-header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
+  .day-stats { display:flex; gap:15px; margin-top:10px; flex-wrap:wrap; }
+  .day-stat { background:rgba(0,0,0,0.2); padding:8px 15px; border-radius:8px; font-size:.9rem; }
+  .tabs { display:flex; gap:5px; margin-bottom:15px; flex-wrap:wrap; }
+  .tab { padding:10px 20px; background:rgba(255,255,255,0.1); border-radius:10px; cursor:pointer; transition:.2s; }
+  .tab.active { background:#ffd700; color:#222; font-weight:bold; }
+  .tab:hover { background:rgba(255,255,255,0.2); }
+  .tab.active:hover { background:#ffec8b; }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- ========== شاشة البداية ========== -->
+  <div id="screen-home">
+    <h1>🎓 منصة الحضور والغياب الذكية</h1>
+    <p style="text-align:center; margin-bottom:20px;">اختر نوع الدخول</p>
+    <button class="btn role-btn" onclick="showScreen('student-login')">👨‍🎓 دخول الطالب</button>
+    <button class="btn role-btn btn-blue" onclick="showScreen('teacher-login')">👨‍🏫 دخول المدرس</button>
+  </div>
+
+  <!-- ========== تسجيل دخول الطالب ========== -->
+  <div id="screen-student-login" class="hidden">
+    <div class="top-bar">
+      <h2>👨‍🎓 بوابة الطالب</h2>
+      <button class="btn btn-red" onclick="showScreen('home')">رجوع</button>
+    </div>
+
+    <div id="student-register-form">
+      <div class="card">
+        <h2>📝 تسجيل طالب جديد (أول مرة)</h2>
+        <input id="s-name" placeholder="الاسم الكامل" />
+        <input id="s-number" placeholder="رقم الطالب / القومي" />
+        <input id="s-class" placeholder="الفصل (مثال: 3 إعدادي أ)" />
+        <button class="btn btn-green" onclick="registerStudent()">تسجيل وإنشاء QR</button>
+      </div>
+
+      <div class="card">
+        <h2>🔑 طالب مسجل مسبقاً</h2>
+        <input id="s-login-number" placeholder="أدخل رقم الطالب" />
+        <button class="btn btn-blue" onclick="loginStudent()">دخول</button>
+      </div>
+      <div id="student-msg"></div>
+    </div>
+
+    <div id="student-dashboard" class="hidden">
+      <div class="card">
+        <h2 id="s-welcome"></h2>
+        <p>📱 امسح الـ QR التالي عند دخول الحصة:</p>
+        <div id="qrcode"></div>
+        <p style="text-align:center; font-size:.9rem; opacity:.8;">رقمك: <span id="s-num-display"></span></p>
+      </div>
+      <button class="btn btn-red" onclick="logoutStudent()">تسجيل خروج</button>
+    </div>
+  </div>
+
+  <!-- ========== تسجيل دخول المدرس ========== -->
+  <div id="screen-teacher-login" class="hidden">
+    <div class="top-bar">
+      <h2>👨‍🏫 بوابة المدرس</h2>
+      <button class="btn btn-red" onclick="showScreen('home')">رجوع</button>
+    </div>
+    <div class="card">
+      <h2>🔐 دخول المدرس</h2>
+      <input id="t-pass" type="password" placeholder="كلمة المرور (الافتراضية: 1234)" />
+      <button class="btn btn-green" onclick="loginTeacher()">دخول</button>
+      <div id="teacher-msg"></div>
+    </div>
+  </div>
+
+  <!-- ========== لوحة المدرس ========== -->
+  <div id="screen-teacher-dashboard" class="hidden">
+    <div class="top-bar">
+      <h2>👨‍🏫 لوحة تحكم المدرس</h2>
+      <button class="btn btn-red" onclick="logoutTeacher()">خروج</button>
+    </div>
+
+    <!-- التبويبات -->
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('today')">📅 اليوم الحالي</div>
+      <div class="tab" onclick="switchTab('history')">📚 سجل الأيام</div>
+      <div class="tab" onclick="switchTab('students')">👥 الطلاب</div>
+    </div>
+
+    <!-- ========== تبويب اليوم الحالي ========== -->
+    <div id="tab-today">
+      <!-- إحصائيات اليوم -->
+      <div class="stats">
+        <div class="stat"><div class="num" id="st-total">0</div><div class="lbl">إجمالي الطلاب المسجلين</div></div>
+        <div class="stat"><div class="num" id="st-present">0</div><div class="lbl">حاضرون اليوم</div></div>
+        <div class="stat"><div class="num" id="st-absent">0</div><div class="lbl">غائبون اليوم</div></div>
+        <div class="stat"><div class="num" id="st-lessons">0</div><div class="lbl">حصص اليوم</div></div>
+      </div>
+
+      <button class="btn btn-red" style="width:100%; padding:15px; font-size:1.1rem;" onclick="endDay()">🏁 إنهاء اليوم وحفظ الملخص</button>
+
+      <!-- إنشاء حصة -->
+      <div class="card">
+        <h2>📚 إنشاء حصة جديدة</h2>
+        <input id="lesson-name" placeholder="اسم الحصة (مثال: رياضيات - الأحد 10 ص)" />
+        <button class="btn btn-green" onclick="createLesson()">➕ إنشاء حصة</button>
+        <div id="lesson-builder"></div>
+      </div>
+
+      <!-- الحصص النشطة اليوم -->
+      <div class="card">
+        <h2>🎯 حصص اليوم</h2>
+        <div id="today-lessons-list"></div>
+      </div>
+
+      <!-- الحصة المفتوحة حالياً -->
+      <div class="card" id="active-lesson-card" style="display:none;">
+        <h2>📡 الحصة المفتوحة: <span id="active-lesson-name" class="badge"></span></h2>
+
+        <div class="stats">
+          <div class="stat"><div class="num" id="al-enrolled">0</div><div class="lbl">مسجلون في الحصة</div></div>
+          <div class="stat"><div class="num" id="al-present">0</div><div class="lbl">حاضرون</div></div>
+          <div class="stat"><div class="num" id="al-absent">0</div><div class="lbl">غائبون</div></div>
+          <div class="stat"><div class="num" id="al-here">0</div><div class="lbl">موجودون الآن</div></div>
         </div>
 
-        <div class="sub-title">
-            {subtitle}
+        <h3 style="margin:15px 0 10px;">📷 مسح QR للحضور</h3>
+        <div id="qr-reader" style="width:100%;"></div>
+        <button class="btn btn-blue" id="start-scan-btn" onclick="startScan()">▶️ بدء المسح</button>
+        <button class="btn btn-red hidden" id="stop-scan-btn" onclick="stopScan()">⏹️ إيقاف</button>
+        <div id="scan-msg"></div>
+
+        <h3 style="margin:20px 0 10px;">📋 قائمة الطلاب في الحصة</h3>
+        <table>
+          <thead><tr><th>الاسم</th><th>الرقم</th><th>الفصل</th><th>الحالة</th><th>وقت الحضور</th></tr></thead>
+          <tbody id="students-table"></tbody>
+        </table>
+
+        <div style="margin-top:15px;">
+          <button class="btn btn-red" onclick="closeLesson()">🏁 إنهاء الحصة</button>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# =========================================================
-# STUDENT REGISTER
-# =========================================================
-
-def student_register():
-
-    show_header(
-        "🎓 منصة الحضور",
-        "📝 تسجيل الطالب",
-    )
-
-    st.info(
-        """
-        التسجيل يتم مرة واحدة.
-        بعد ذلك الطالب يدخل مباشرة إلى واجهته
-        ويستخدم QR الخاص بالحصة.
-        """
-    )
-
-    with st.form(
-        "register_student",
-        clear_on_submit=False,
-    ):
-
-        name = st.text_input(
-            "👨‍🎓 اسم الطالب"
-        )
-
-        phone = st.text_input(
-            "📱 رقم هاتف الطالب"
-        )
-
-        parent_phone = st.text_input(
-            "👪 رقم هاتف ولي الأمر"
-        )
-
-        grade = st.selectbox(
-            "🎓 الصف",
-            GRADES,
-        )
-
-        group = st.selectbox(
-            "👥 المجموعة",
-            GROUPS,
-        )
-
-        current_count = group_count(
-            grade,
-            group,
-        )
-
-        st.info(
-            f"👥 {group}: "
-            f"{current_count}/{GROUP_LIMIT}"
-        )
-
-        submitted = st.form_submit_button(
-            "✅ تسجيل الطالب",
-            use_container_width=True,
-        )
-
-    if not submitted:
-        return
-
-    name = name.strip()
-    phone = clean_phone(phone)
-    parent_phone = clean_phone(
-        parent_phone
-    )
-
-    if not name:
-
-        st.error(
-            "❌ اكتب اسم الطالب."
-        )
-
-        return
-
-    if len(phone) < 8:
-
-        st.error(
-            "❌ رقم هاتف الطالب غير صحيح."
-        )
-
-        return
-
-    if group_is_full(
-        grade,
-        group,
-    ):
-
-        st.error(
-            f"❌ {group} وصلت إلى "
-            f"{GROUP_LIMIT} طالب."
-        )
-
-        return
-
-    conn = get_connection()
-
-    try:
-
-        existing = conn.execute(
-            """
-            SELECT *
-            FROM students
-            WHERE phone = ?
-            """,
-            (phone,),
-        ).fetchone()
-
-        if existing:
-
-            st.session_state.student_id = (
-                existing["id"]
-            )
-
-            st.query_params["page"] = "student"
-            st.query_params["student"] = str(
-                existing["id"]
-            )
-
-            st.success(
-                "✅ رقم الهاتف مسجل بالفعل، تم فتح حساب الطالب."
-            )
-
-            st.rerun()
-
-        cursor = conn.execute(
-            """
-            INSERT INTO students
-            (
-                name,
-                phone,
-                parent_phone,
-                grade,
-                group_name,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                name,
-                phone,
-                parent_phone,
-                grade,
-                group,
-                now(),
-            ),
-        )
-
-        conn.commit()
-
-        student_id = cursor.lastrowid
-
-        st.session_state.student_id = (
-            student_id
-        )
-
-        st.query_params["page"] = "student"
-        st.query_params["student"] = str(
-            student_id
-        )
-
-        st.success(
-            "🎉 تم تسجيل الطالب بنجاح."
-        )
-
-        st.rerun()
-
-    except sqlite3.IntegrityError:
-
-        conn.rollback()
-
-        st.error(
-            "❌ رقم الهاتف مسجل بالفعل."
-        )
-
-    except Exception as e:
-
-        conn.rollback()
-
-        st.error(
-            "❌ حدث خطأ: "
-            + str(e)
-        )
-
-    finally:
-
-        conn.close()
-
-
-# =========================================================
-# STUDENT PAGE
-# =========================================================
-
-def student_page():
-
-    show_header(
-        "🎓 منصة الحضور",
-        "👨‍🎓 واجهة الطالب",
-    )
-
-    student_id = st.session_state.get(
-        "student_id"
-    )
-
-    query_student = st.query_params.get(
-        "student"
-    )
-
-    if student_id is None and query_student:
-
-        try:
-
-            student_id = int(
-                query_student
-            )
-
-            st.session_state.student_id = (
-                student_id
-            )
-
-        except Exception:
-
-            student_id = None
-
-    if student_id is None:
-
-        student_register()
-
-        return
-
-    student = get_student(
-        student_id
-    )
-
-    if not student:
-
-        st.session_state.pop(
-            "student_id",
-            None
-        )
-
-        st.query_params.clear()
-
-        st.rerun()
-
-    st.success(
-        f"👨‍🎓 {student['name']}  |  "
-        f"{student['grade']}  |  "
-        f"{student['group_name']}"
-    )
-
-    # -----------------------------------------------------
-    # QR lesson from URL
-    # -----------------------------------------------------
-
-    lesson_token = st.query_params.get(
-        "lesson"
-    )
-
-    lesson = None
-
-    if lesson_token:
-
-        token = extract_token(
-            lesson_token
-        )
-
-        if token:
-
-            lesson = get_lesson_by_token(
-                token
-            )
-
-            if lesson and not lesson["active"]:
-
-                lesson = None
-
-    # -----------------------------------------------------
-    # Otherwise get current lesson
-    # -----------------------------------------------------
-
-    if lesson is None:
-
-        lesson = get_open_lesson(
-            student["grade"],
-            student["group_name"],
-        )
-
-    if lesson is None:
-
-        st.info(
-            """
-            ⏳ لا توجد حصة مفتوحة لمجموعتك حالياً.
-            """
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # Verify group
-    # -----------------------------------------------------
-
-    if (
-        lesson["grade"]
-        != student["grade"]
-        or
-        lesson["group_name"]
-        != student["group_name"]
-    ):
-
-        st.error(
-            "❌ هذه الحصة ليست لمجموعتك."
-        )
-
-        return
-
-    st.subheader(
-        f"📚 {lesson['lesson_name']}"
-    )
-
-    st.write(
-        f"🎓 الصف: {lesson['grade']}"
-    )
-
-    st.write(
-        f"👥 المجموعة: {lesson['group_name']}"
-    )
-
-    st.write(
-        f"🕐 بدأت: {lesson['created_at']}"
-    )
-
-    conn = get_connection()
-
-    try:
-
-        already = conn.execute(
-            """
-            SELECT marked_at
-            FROM attendance
-            WHERE lesson_id = ?
-            AND student_id = ?
-            """,
-            (
-                lesson["id"],
-                student_id,
-            ),
-        ).fetchone()
-
-    finally:
-
-        conn.close()
-
-    if already:
-
-        st.success(
-            "✅ حضورك مسجل بالفعل."
-        )
-
-        st.write(
-            f"🕐 وقت الحضور: "
-            f"{already['marked_at']}"
-        )
-
-        return
-
-    st.info(
-        """
-        📷 صوّر QR الخاص بالحصة.
-        """
-
-    )
-
-    photo = st.camera_input(
-        "📷 تصوير QR",
-        key=f"camera_{lesson['id']}",
-    )
-
-    if not photo:
-        return
-
-    raw_value = decode_qr(
-        photo.getvalue()
-    )
-
-    if not raw_value:
-
-        st.error(
-            """
-            ❌ لم أستطع قراءة QR.
-
-            حاول أن يكون الكود كاملًا
-            وواضحًا داخل الكاميرا.
-            """
-        )
-
-        return
-
-    token = extract_token(
-        raw_value
-    )
-
-    if not token:
-
-        st.error(
-            "❌ هذا QR ليس تابعًا لمنصة الحضور."
-        )
-
-        return
-
-    ok, message = mark_attendance(
-        token,
-        student_id,
-    )
-
-    if ok:
-
-        st.success(message)
-
-        st.balloons()
-
-    else:
-
-        st.error(message)
-
-    st.rerun()
-
-
-# =========================================================
-# TEACHER LOGIN
-# =========================================================
-
-def teacher_login():
-
-    show_header(
-        "🎓 منصة الحضور",
-        "👨‍🏫 لوحة تحكم المدرس",
-    )
-
-    password = st.text_input(
-        "🔐 كلمة مرور المدرس",
-        type="password",
-    )
-
-    if st.button(
-        "👨‍🏫 دخول المدرس",
-        use_container_width=True,
-    ):
-
-        if password == TEACHER_PASSWORD:
-
-            st.session_state.teacher = True
-
-            st.rerun()
-
-        else:
-
-            st.error(
-                "❌ كلمة المرور غير صحيحة."
-            )
-
-    st.caption(
-        "كلمة المرور الافتراضية: 1234"
-    )
-
-
-# =========================================================
-# CREATE LESSON
-# =========================================================
-
-def create_lesson_page():
-
-    st.subheader(
-        "➕ إنشاء حصة جديدة"
-    )
-
-    grade = st.selectbox(
-        "🎓 اختر الصف",
-        GRADES,
-        key="create_grade",
-    )
-
-    st.markdown(
-        "### 👥 مجموعات الصف"
-    )
-
-    cols = st.columns(3)
-
-    for i, group in enumerate(
-        GROUPS
-    ):
-
-        count = group_count(
-            grade,
-            group,
-        )
-
-        with cols[i]:
-
-            st.metric(
-                group,
-                f"{count}/{GROUP_LIMIT}",
-            )
-
-    group = st.selectbox(
-        "👥 اختر مجموعة الحصة",
-        GROUPS,
-        key="create_group",
-    )
-
-    count = group_count(
-        grade,
-        group,
-    )
-
-    st.info(
-        f"👨‍🎓 عدد طلاب {group}: "
-        f"{count}/{GROUP_LIMIT}"
-    )
-
-    if count == 0:
-
-        st.warning(
-            """
-            ⚠️ لا يوجد طلاب في المجموعة.
-            سجل الطلاب أولًا.
-            """
-        )
-
-    lesson_name = st.text_input(
-        "📚 اسم الحصة",
-        value="الحصة الحالية",
-    )
-
-    if st.button(
-        "🟢 بدء الحصة",
-        use_container_width=True,
-    ):
-
-        if count == 0:
-
-            st.error(
-                "❌ لا يمكن إنشاء حصة لمجموعة بدون طلاب."
-            )
-
-            return
-
-        success, result = create_lesson(
-            lesson_name.strip()
-            or "الحصة الحالية",
-            grade,
-            group,
-        )
-
-        if not success:
-
-            st.error(
-                "❌ " + str(result)
-            )
-
-            return
-
-        st.success(
-            "🎉 تم إنشاء الحصة."
-        )
-
-        st.rerun()
-
-
-# =========================================================
-# CURRENT LESSONS
-# =========================================================
-
-def current_lessons_page():
-
-    st.subheader(
-        "📊 الحصص المفتوحة حاليًا"
-    )
-
-    lessons = get_open_lessons()
-
-    if not lessons:
-
-        st.info(
-            "⏳ لا توجد حصص مفتوحة حاليًا."
-        )
-
-        return
-
-    for lesson in lessons:
-
-        total, present, absent = (
-            get_lesson_stats(
-                lesson["id"]
-            )
-        )
-
-        with st.container(
-            border=True
-        ):
-
-            st.markdown(
-                f"### 📚 {lesson['lesson_name']}"
-            )
-
-            st.write(
-                f"🎓 {lesson['grade']}"
-            )
-
-            st.write(
-                f"👥 {lesson['group_name']}"
-            )
-
-            c1, c2, c3 = st.columns(3)
-
-            c1.metric(
-                "الطلاب",
-                total,
-            )
-
-            c2.metric(
-                "الحضور",
-                present,
-            )
-
-            c3.metric(
-                "الغياب",
-                absent,
-            )
-
-            st.write(
-                f"🕐 {lesson['created_at']}"
-            )
-
-            link = lesson_url(
-                lesson["token"]
-            )
-
-            st.write(
-                "🔗 رابط الحصة:"
-            )
-
-            st.code(
-                link,
-                language="text",
-            )
-
-            # QR بالرابط الكامل
-            qr = qrcode.QRCode(
-                version=None,
-                error_correction=qrcode.constants.ERROR_CORRECT_H,
-                box_size=10,
-                border=4,
-            )
-
-            qr.add_data(
-                link
-            )
-
-            qr.make(
-                fit=True
-            )
-
-            qr_image = qr.make_image()
-
-            buffer = io.BytesIO()
-
-            qr_image.save(
-                buffer,
-                format="PNG",
-            )
-
-            st.image(
-                buffer.getvalue(),
-                caption="📷 QR الخاص بهذه الحصة",
-                width=320,
-            )
-
-            # الطلاب
-            conn = get_connection()
-
-            try:
-
-                rows = conn.execute(
-                    """
-                    SELECT
-                        s.name,
-                        s.phone,
-                        a.marked_at
-                    FROM lesson_students ls
-
-                    JOIN students s
-                    ON s.id = ls.student_id
-
-                    LEFT JOIN attendance a
-                    ON a.lesson_id = ls.lesson_id
-                    AND a.student_id = ls.student_id
-
-                    WHERE ls.lesson_id = ?
-
-                    ORDER BY s.name
-                    """,
-                    (lesson["id"],),
-                ).fetchall()
-
-            finally:
-
-                conn.close()
-
-            table = []
-
-            for row in rows:
-
-                table.append(
-                    {
-                        "الطالب": row["name"],
-                        "الهاتف": row["phone"],
-                        "الحالة":
-                            "✅ حاضر"
-                            if row["marked_at"]
-                            else "❌ غائب",
-                        "وقت الحضور":
-                            row["marked_at"]
-                            or "-",
-                    }
-                )
-
-            st.dataframe(
-                table,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            if st.button(
-                "⛔ إنهاء وحفظ الحصة",
-                key=f"finish_{lesson['id']}",
-                use_container_width=True,
-            ):
-
-                finish_lesson(
-                    lesson["id"]
-                )
-
-                st.success(
-                    """
-                    ✅ انتهت الحصة.
-
-                    تم حفظ الحضور والغياب
-                    والتاريخ والوقت.
-                    """
-                )
-
-                st.rerun()
-
-
-# =========================================================
-# REPORTS
-# =========================================================
-
-def reports_page():
-
-    st.subheader(
-        "📋 التقارير والحصص السابقة"
-    )
-
-    conn = get_connection()
-
-    try:
-
-        lessons = conn.execute(
-            """
-            SELECT *
-            FROM lessons
-            WHERE active = 0
-            ORDER BY id DESC
-            """
-        ).fetchall()
-
-    finally:
-
-        conn.close()
-
-    if not lessons:
-
-        st.info(
-            "لا توجد حصص محفوظة حتى الآن."
-        )
-
-        return
-
-    options = {}
-
-    for lesson in lessons:
-
-        label = (
-            f"#{lesson['id']} | "
-            f"{lesson['grade']} | "
-            f"{lesson['group_name']} | "
-            f"{lesson['lesson_name']} | "
-            f"{lesson['created_at']}"
-        )
-
-        options[label] = lesson["id"]
-
-    selected = st.selectbox(
-        "📚 اختر الحصة",
-        list(options.keys()),
-    )
-
-    lesson_id = options[
-        selected
-    ]
-
-    total, present, absent = (
-        get_lesson_stats(
-            lesson_id
-        )
-    )
-
-    c1, c2, c3 = st.columns(3)
-
-    c1.metric(
-        "👨‍🎓 إجمالي الطلاب",
-        total,
-    )
-
-    c2.metric(
-        "✅ الحضور",
-        present,
-    )
-
-    c3.metric(
-        "❌ الغياب",
-        absent,
-    )
-
-    conn = get_connection()
-
-    try:
-
-        rows = conn.execute(
-            """
-            SELECT
-                s.name,
-                s.phone,
-                s.grade,
-                s.group_name,
-                a.marked_at
-            FROM lesson_students ls
-
-            JOIN students s
-            ON s.id = ls.student_id
-
-            LEFT JOIN attendance a
-            ON a.lesson_id = ls.lesson_id
-            AND a.student_id = ls.student_id
-
-            WHERE ls.lesson_id = ?
-
-            ORDER BY s.name
-            """,
-            (lesson_id,),
-        ).fetchall()
-
-    finally:
-
-        conn.close()
-
-    table = []
-
-    for row in rows:
-
-        table.append(
-            {
-                "الطالب": row["name"],
-                "الهاتف": row["phone"],
-                "الصف": row["grade"],
-                "المجموعة": row["group_name"],
-                "الحالة":
-                    "✅ حاضر"
-                    if row["marked_at"]
-                    else "❌ غائب",
-                "وقت الحضور":
-                    row["marked_at"]
-                    or "-",
-            }
-        )
-
-    st.dataframe(
-        table,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# =========================================================
-# STATISTICS
-# =========================================================
-
-def statistics_page():
-
-    st.subheader(
-        "📈 إحصائيات الطلاب"
-    )
-
-    conn = get_connection()
-
-    try:
-
-        rows = conn.execute(
-            """
-            SELECT
-                grade,
-                group_name,
-                COUNT(*) AS total
-            FROM students
-            GROUP BY grade, group_name
-            """
-        ).fetchall()
-
-    finally:
-
-        conn.close()
-
-    counts = {}
-
-    for row in rows:
-
-        counts[
-            (
-                row["grade"],
-                row["group_name"],
-            )
-        ] = row["total"]
-
-    table = []
-
-    for grade in GRADES:
-
-        for group in GROUPS:
-
-            total = counts.get(
-                (
-                    grade,
-                    group,
-                ),
-                0,
-            )
-
-            table.append(
-                {
-                    "الصف": grade,
-                    "المجموعة": group,
-                    "عدد الطلاب": total,
-                    "السعة": GROUP_LIMIT,
-                    "المتبقي":
-                        max(
-                            0,
-                            GROUP_LIMIT - total
-                        ),
-                }
-            )
-
-    st.dataframe(
-        table,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-# =========================================================
-# STUDENTS PAGE
-# =========================================================
-
-def students_page():
-
-    st.subheader(
-        "👨‍🎓 الطلاب"
-    )
-
-    conn = get_connection()
-
-    try:
-
-        rows = conn.execute(
-            """
-            SELECT
-                id,
-                name,
-                phone,
-                parent_phone,
-                grade,
-                group_name,
-                created_at
-            FROM students
-            ORDER BY
-                grade,
-                group_name,
-                name
-            """
-        ).fetchall()
-
-    finally:
-
-        conn.close()
-
-    st.metric(
-        "👨‍🎓 إجمالي الطلاب",
-        len(rows),
-    )
-
-    table = []
-
-    for row in rows:
-
-        table.append(
-            {
-                "ID": row["id"],
-                "الاسم": row["name"],
-                "هاتف الطالب": row["phone"],
-                "هاتف ولي الأمر":
-                    row["parent_phone"],
-                "الصف": row["grade"],
-                "المجموعة": row["group_name"],
-                "تاريخ التسجيل":
-                    row["created_at"],
-            }
-        )
-
-    if table:
-
-        st.dataframe(
-            table,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-
-# =========================================================
-# TEACHER DASHBOARD
-# =========================================================
-
-def teacher_dashboard():
-
-    if not st.session_state.get(
-        "teacher",
-        False,
-    ):
-
-        teacher_login()
-
-        return
-
-    show_header(
-        "🎓 منصة الحضور",
-        "👨‍🏫 لوحة تحكم المدرس",
-    )
-
-    if st.button(
-        "🚪 تسجيل خروج"
-    ):
-
-        st.session_state.teacher = False
-
-        st.rerun()
-
-    tabs = st.tabs(
-        [
-            "➕ إنشاء حصة",
-            "📊 الحصص الحالية",
-            "📋 التقارير",
-            "📈 الإحصائيات",
-            "👨‍🎓 الطلاب",
-        ]
-    )
-
-    with tabs[0]:
-
-        create_lesson_page()
-
-    with tabs[1]:
-
-        current_lessons_page()
-
-    with tabs[2]:
-
-        reports_page()
-
-    with tabs[3]:
-
-        statistics_page()
-
-    with tabs[4]:
-
-        students_page()
-
-    st.divider()
-
-    st.subheader(
-        "🔗 رابط تسجيل الطلاب"
-    )
-
-    st.code(
-        student_registration_url(),
-        language="text",
-    )
-
-    st.info(
-        """
-        📱 ابعت الرابط للطلاب.
-
-        الطالب يسجل بياناته مرة واحدة،
-        وبعدها كل حصة لها QR خاص بها.
-        """
-    )
-
-
-# =========================================================
-# MAIN
-# =========================================================
-
-def main():
-
-    try:
-
-        init_db()
-
-    except Exception as e:
-
-        st.error(
-            "❌ تعذر تشغيل قاعدة البيانات."
-        )
-
-        st.code(
-            str(e)
-        )
-
-        st.stop()
-
-    page = st.query_params.get(
-        "page",
-        "teacher",
-    )
-
-    if page == "student":
-
-        student_page()
-
-    else:
-
-        teacher_dashboard()
-
-
-# =========================================================
-# START
-# =========================================================
-
-if __name__ == "__main__":
-    main()
+      </div>
+    </div>
+
+    <!-- ========== تبويب سجل الأيام ========== -->
+    <div id="tab-history" class="hidden">
+      <div class="card">
+        <h2>📚 سجل الأيام السابقة</h2>
+        <p style="opacity:.8; margin-bottom:15px;">اضغط على أي يوم لعرض تفاصيله</p>
+        <div id="days-list"></div>
+      </div>
+
+      <!-- تفاصيل يوم محدد -->
+      <div class="card hidden" id="day-details">
+        <div class="top-bar">
+          <h2 id="day-details-title">📅 تفاصيل اليوم</h2>
+          <button class="btn btn-red" onclick="closeDayDetails()">إغلاق</button>
+        </div>
+        <div class="stats" id="day-details-stats"></div>
+        <h3>📖 الحصص في هذا اليوم:</h3>
+        <div id="day-details-lessons"></div>
+      </div>
+    </div>
+
+    <!-- ========== تبويب الطلاب ========== -->
+    <div id="tab-students" class="hidden">
+      <div class="card">
+        <h2>👥 جميع الطلاب المسجلين</h2>
+        <table>
+          <thead><tr><th>الاسم</th><th>الرقم</th><th>الفصل</th><th>إجراءات</th></tr></thead>
+          <tbody id="all-students-table"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+/* ==================== التخزين ==================== */
+const DB = {
+  get students() { return JSON.parse(localStorage.getItem('students') || '[]'); },
+  set students(v) { localStorage.setItem('students', JSON.stringify(v)); },
+  get lessons()  { return JSON.parse(localStorage.getItem('lessons')  || '[]'); },
+  set lessons(v) { localStorage.setItem('lessons', JSON.stringify(v)); },
+  get days()     { return JSON.parse(localStorage.getItem('days')     || '[]'); },
+  set days(v)    { localStorage.setItem('days', JSON.stringify(v)); },
+  get session()  { return JSON.parse(localStorage.getItem('session')  || '{}'); },
+  set session(v) { localStorage.setItem('session', JSON.stringify(v)); }
+};
+
+let currentStudent = null;
+let activeLessonId = null;
+let qrScanner = null;
+let currentTab = 'today';
+
+/* ==================== تواريخ ==================== */
+function todayKey() {
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function formatDate(key) {
+  const d = new Date(key);
+  const days = ['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+  return `${days[d.getDay()]} ${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()}`;
+}
+function isToday(key) { return key === todayKey(); }
+
+/* ==================== التبويبات ==================== */
+function switchTab(name) {
+  currentTab = name;
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  event.target.classList.add('active');
+  ['today','history','students'].forEach(t=>{
+    document.getElementById('tab-'+t).classList.add('hidden');
+  });
+  document.getElementById('tab-'+name).classList.remove('hidden');
+  if (name==='today') renderTodayTab();
+  if (name==='history') renderHistoryTab();
+  if (name==='students') renderStudentsTab();
+}
+
+/* ==================== التنقل ==================== */
+function showScreen(name) {
+  ['home','student-login','teacher-login','teacher-dashboard'].forEach(s=>{
+    document.getElementById('screen-'+s).classList.add('hidden');
+  });
+  document.getElementById('screen-'+name).classList.remove('hidden');
+}
+
+/* ==================== الطالب ==================== */
+function registerStudent() {
+  const name   = document.getElementById('s-name').value.trim();
+  const number = document.getElementById('s-number').value.trim();
+  const cls    = document.getElementById('s-class').value.trim();
+  const msg    = document.getElementById('student-msg');
+
+  if (!name || !number || !cls) { msg.innerHTML='<div class="alert alert-error">أكمل كل البيانات</div>'; return; }
+
+  const students = DB.students;
+  if (students.find(s=>s.number===number)) {
+    msg.innerHTML='<div class="alert alert-error">هذا الرقم مسجل مسبقاً</div>'; return;
+  }
+
+  const student = { id:'STU-'+Date.now(), name, number, cls, createdAt:new Date().toISOString() };
+  students.push(student);
+  DB.students = students;
+
+  msg.innerHTML='<div class="alert alert-success">✅ تم التسجيل بنجاح</div>';
+  setTimeout(()=>enterStudentDashboard(student), 800);
+}
+
+function loginStudent() {
+  const number = document.getElementById('s-login-number').value.trim();
+  const msg = document.getElementById('student-msg');
+  const student = DB.students.find(s=>s.number===number);
+  if (!student) { msg.innerHTML='<div class="alert alert-error">رقم غير موجود</div>'; return; }
+  enterStudentDashboard(student);
+}
+
+function enterStudentDashboard(student) {
+  currentStudent = student;
+  DB.session = { role:'student', id:student.id };
+  document.getElementById('student-register-form').classList.add('hidden');
+  document.getElementById('student-dashboard').classList.remove('hidden');
+  document.getElementById('s-welcome').textContent = 'مرحباً '+student.name+' 👋';
+  document.getElementById('s-num-display').textContent = student.number;
+
+  const qrDiv = document.getElementById('qrcode');
+  qrDiv.innerHTML = '';
+  new QRCode(qrDiv, {
+    text: student.id,
+    width: 220, height: 220,
+    colorDark:'#000', colorLight:'#fff'
+  });
+}
+
+function logoutStudent() {
+  DB.session = {};
+  currentStudent = null;
+  document.getElementById('student-register-form').classList.remove('hidden');
+  document.getElementById('student-dashboard').classList.add('hidden');
+  showScreen('home');
+}
+
+/* ==================== المدرس ==================== */
+function loginTeacher() {
+  const pass = document.getElementById('t-pass').value;
+  const msg = document.getElementById('teacher-msg');
+  if (pass === '1234') {
+    DB.session = { role:'teacher' };
+    showScreen('teacher-dashboard');
+    renderTodayTab();
+  } else {
+    msg.innerHTML='<div class="alert alert-error">كلمة مرور خاطئة</div>';
+  }
+}
+
+function logoutTeacher() {
+  if (qrScanner) stopScan();
+  DB.session = {};
+  showScreen('home');
+}
+
+/* ==================== إدارة اليوم ==================== */
+function ensureTodayDay() {
+  const days = DB.days;
+  const key = todayKey();
+  let day = days.find(d=>d.date===key);
+  if (!day) {
+    day = { id:'DAY-'+Date.now(), date:key, createdAt:new Date().toISOString(), ended:false };
+    days.push(day);
+    DB.days = days;
+  }
+  return day;
+}
+
+function endDay() {
+  if (!confirm('هل تريد إنهاء اليوم وحفظ الملخص؟ سيتم إغلاق كل الحصص النشطة.')) return;
+
+  const key = todayKey();
+  const days = DB.days;
+  const day = days.find(d=>d.date===key);
+  if (day) {
+    day.ended = true;
+    day.endedAt = new Date().toISOString();
+    // حساب الملخص
+    const lessons = DB.lessons.filter(l=>l.date===key);
+    let totalPresent = 0, totalEnrolled = 0;
+    lessons.forEach(l=>{
+      totalPresent += Object.keys(l.attendance).length;
+      totalEnrolled += l.enrolled.length;
+    });
+    day.summary = {
+      lessonsCount: lessons.length,
+      totalPresent,
+      totalEnrolled,
+      totalAbsent: totalEnrolled - totalPresent
+    };
+    DB.days = days;
+  }
+
+  // إغلاق كل الحصص النشطة اليوم
+  const lessons = DB.lessons;
+  lessons.forEach(l=>{ if (l.date===key) l.active=false; });
+  DB.lessons = lessons;
+
+  if (qrScanner) stopScan();
+  activeLessonId = null;
+  alert('✅ تم إنهاء اليوم وحفظ الملخص');
+  renderTodayTab();
+}
+
+/* ==================== إنشاء حصة ==================== */
+function createLesson() {
+  const name = document.getElementById('lesson-name').value.trim();
+  if (!name) { alert('اكتب اسم الحصة'); return; }
+
+  const students = DB.students;
+  if (students.length === 0) { alert('لا يوجد طلاب مسجلين بعد'); return; }
+
+  let html = '<div class="card" style="margin-top:15px;"><h3>اختر طلاب الحصة:</h3>';
+  html += '<label class="checkbox-item"><input type="checkbox" id="sel-all" onchange="toggleAll(this)"> <b>تحديد الكل</b></label>';
+  students.forEach(s=>{
+    html += `<label class="checkbox-item"><input type="checkbox" class="stu-check" value="${s.id}"> ${s.name} - ${s.cls}</label>`;
+  });
+  html += '<br><button class="btn btn-green" onclick="confirmLesson()">تأكيد إنشاء الحصة</button>';
+  html += '<button class="btn btn-red" onclick="cancelLesson()">إلغاء</button></div>';
+
+  document.getElementById('lesson-builder').innerHTML = html;
+}
+
+function cancelLesson() {
+  document.getElementById('lesson-builder').innerHTML = '';
+}
+
+function toggleAll(master) {
+  document.querySelectorAll('.stu-check').forEach(c=>c.checked=master.checked);
+}
+
+function confirmLesson() {
+  const name = document.getElementById('lesson-name').value.trim();
+  const selected = Array.from(document.querySelectorAll('.stu-check:checked')).map(c=>c.value);
+  if (selected.length === 0) { alert('اختر طالب واحد على الأقل'); return; }
+
+  const dayKey = todayKey();
+  ensureTodayDay();
+
+  const lesson = {
+    id:'LES-'+Date.now(),
+    name,
+    date: dayKey,
+    enrolled: selected,
+    attendance: {},
+    active: true,
+    createdAt: new Date().toISOString()
+  };
+
+  // إغلاق أي حصة نشطة أخرى
+  const lessons = DB.lessons;
+  lessons.forEach(l=>{ if (l.date===dayKey) l.active=false; });
+  lessons.push(lesson);
+  DB.lessons = lessons;
+
+  activeLessonId = lesson.id;
+  document.getElementById('lesson-name').value = '';
+  document.getElementById('lesson-builder').innerHTML = '';
+  renderTodayTab();
+}
+
+/* ==================== تبويب اليوم الحالي ==================== */
+function renderTodayTab() {
+  const students = DB.students;
+  const key = todayKey();
+  const lessons = DB.lessons.filter(l=>l.date===key);
+
+  // إحصائيات اليوم
+  let totalPresent = 0;
+  let totalEnrolled = 0;
+  lessons.forEach(l=>{
+    totalPresent += Object.keys(l.attendance).length;
+    totalEnrolled += l.enrolled.length;
+  });
+
+  document.getElementById('st-total').textContent = students.length;
+  document.getElementById('st-present').textContent = totalPresent;
+  document.getElementById('st-absent').textContent = totalEnrolled - totalPresent;
+  document.getElementById('st-lessons').textContent = lessons.length;
+
+  // قائمة حصص اليوم
+  const list = document.getElementById('today-lessons-list');
+  if (lessons.length === 0) {
+    list.innerHTML = '<p style="opacity:.7;">لا توجد حصص اليوم بعد</p>';
+  } else {
+    list.innerHTML = '';
+    lessons.slice().reverse().forEach(l=>{
+      const p = Object.keys(l.attendance).length;
+      const badge = l.active ? '<span class="badge">🟢 نشطة</span>' : '<span class="badge" style="background:#888;">⏹️ منتهية</span>';
+      list.innerHTML += `
+        <div class="student-item">
+          <div><b>${l.name}</b> ${badge}<br><small>حضور: ${p}/${l.enrolled.length}</small></div>
+          <div>
+            ${!l.active ? `<button class="btn btn-blue" onclick="activateLesson('${l.id}')">تفعيل</button>` : ''}
+            <button class="btn btn-red" onclick="deleteLesson('${l.id}')">حذف</button>
+          </div>
+        </div>`;
+    });
+  }
+
+  // الحصة النشطة
+  const activeCard = document.getElementById('active-lesson-card');
+  const current = lessons.find(l=>l.active);
+  if (current) {
+    activeLessonId = current.id;
+    activeCard.style.display = 'block';
+    document.getElementById('active-lesson-name').textContent = current.name;
+
+    const enrolled = current.enrolled.length;
+    const present  = Object.keys(current.attendance).length;
+    document.getElementById('al-enrolled').textContent = enrolled;
+    document.getElementById('al-present').textContent  = present;
+    document.getElementById('al-absent').textContent   = enrolled - present;
+    document.getElementById('al-here').textContent     = present;
+
+    const tbody = document.getElementById('students-table');
+    tbody.innerHTML = '';
+    current.enrolled.forEach(sid=>{
+      const s = students.find(x=>x.id===sid);
+      if (!s) return;
+      const att = current.attendance[sid];
+      const status = att ? `<span class="present">✅ حاضر</span>` : `<span class="absent">❌ غائب</span>`;
+      const time = att ? new Date(att.time).toLocaleTimeString('ar-EG') : '—';
+      tbody.innerHTML += `<tr><td>${s.name}</td><td>${s.number}</td><td>${s.cls}</td><td>${status}</td><td>${time}</td></tr>`;
+    });
+  } else {
+    activeCard.style.display = 'none';
+    activeLessonId = null;
+  }
+}
+
+function activateLesson(id) {
+  const lessons = DB.lessons;
+  const target = lessons.find(l=>l.id===id);
+  if (!target) return;
+  // إغلاق أي حصة نشطة في نفس اليوم
+  lessons.forEach(l=>{ if (l.date===target.date) l.active=false; });
+  target.active = true;
+  DB.lessons = lessons;
+  renderTodayTab();
+}
+
+function deleteLesson(id) {
+  if (!confirm('حذف الحصة؟')) return;
+  DB.lessons = DB.lessons.filter(l=>l.id!==id);
+  if (activeLessonId === id) activeLessonId = null;
+  renderTodayTab();
+}
+
+function closeLesson() {
+  if (!confirm('إنهاء الحصة الحالية؟')) return;
+  const lessons = DB.lessons;
+  lessons.forEach(l=>{ if (l.id===activeLessonId) l.active=false; });
+  DB.lessons = lessons;
+  if (qrScanner) stopScan();
+  activeLessonId = null;
+  renderTodayTab();
+}
+
+/* ==================== تبويب سجل الأيام ==================== */
+function renderHistoryTab() {
+  const days = DB.days.slice().reverse();
+  const list = document.getElementById('days-list');
+
+  if (days.length === 0) {
+    list.innerHTML = '<p style="opacity:.7;">لا توجد أيام مسجلة بعد</p>';
+    return;
+  }
+
+  list.innerHTML = '';
+  days.forEach(d=>{
+    const lessons = DB.lessons.filter(l=>l.date===d.date);
+    let totalPresent = 0, totalEnrolled = 0;
+    lessons.forEach(l=>{
+      totalPresent += Object.keys(l.attendance).length;
+      totalEnrolled += l.enrolled.length;
+    });
+
+    // لو اليوم مش مسجل له ملخص، نحسبه مباشرة
+    let summary = d.summary;
+    if (!summary) {
+      summary = {
+        lessonsCount: lessons.length,
+        totalPresent,
+        totalEnrolled,
+        totalAbsent: totalEnrolled - totalPresent
+      };
+    }
+
+    const todayBadge = isToday(d.date) ? '<span class="badge">📅 اليوم</span>' : '';
+    const endedBadge = d.ended ? '<span class="badge" style="background:#27ae60;">✅ منتهي</span>' : '<span class="badge" style="background:#e67e22;">⏳ جاري</span>';
+
+    list.innerHTML += `
+      <div class="day-card ${isToday(d.date)?'today':''}" onclick="showDayDetails('${d.date}')">
+        <div class="day-header">
+          <div>
+            <b style="font-size:1.2rem;">${formatDate(d.date)}</b> ${todayBadge} ${endedBadge}
+          </div>
+          <div style="opacity:.8;">${lessons.length} حصة</div>
+        </div>
+        <div class="day-stats">
+          <div class="day-stat">📚 ${summary.lessonsCount} حصة</div>
+          <div class="day-stat">✅ ${summary.totalPresent} حاضر</div>
+          <div class="day-stat">❌ ${summary.totalAbsent} غائب</div>
+          <div class="day-stat">👥 ${summary.totalEnrolled} إجمالي</div>
+        </div>
+      </div>`;
+  });
+}
+
+function showDayDetails(dateKey) {
+  document.getElementById('day-details').classList.remove('hidden');
+  document.getElementById('day-details-title').textContent = '📅 ' + formatDate(dateKey);
+
+  const lessons = DB.lessons.filter(l=>l.date===dateKey);
+  const students = DB.students;
+
+  let totalPresent = 0, totalEnrolled = 0;
+  lessons.forEach(l=>{
+    totalPresent += Object.keys(l.attendance).length;
+    totalEnrolled += l.enrolled.length;
+  });
+
+  document.getElementById('day-details-stats').innerHTML = `
+    <div class="stat"><div class="num">${lessons.length}</div><div class="lbl">حصص</div></div>
+    <div class="stat"><div class="num">${totalPresent}</div><div class="lbl">إجمالي الحضور</div></div>
+    <div class="stat"><div class="num">${totalEnrolled - totalPresent}</div><div class="lbl">إجمالي الغياب</div></div>
+    <div class="stat"><div class="num">${totalEnrolled}</div><div class="lbl">إجمالي المسجلين</div></div>
+  `;
+
+  const lessonsDiv = document.getElementById('day-details-lessons');
+  if (lessons.length === 0) {
+    lessonsDiv.innerHTML = '<p style="opacity:.7;">لا توجد حصص في هذا اليوم</p>';
+    return;
+  }
+
+  lessonsDiv.innerHTML = '';
+  lessons.forEach(l=>{
+    const p = Object.keys(l.attendance).length;
+    const e = l.enrolled.length;
+    let rows = '';
+    l.enrolled.forEach(sid=>{
+      const s = students.find(x=>x.id===sid);
+      if (!s) return;
+      const att = l.attendance[sid];
+      const status = att ? `<span class="present">✅ حاضر</span>` : `<span class="absent">❌ غائب</span>`;
+      const time = att ? new Date(att.time).toLocaleTimeString('ar-EG') : '—';
+      rows += `<tr><td>${s.name}</td><td>${s.number}</td><td>${s.cls}</td><td>${status}</td><td>${time}</td></tr>`;
+    });
+
+    lessonsDiv.innerHTML += `
+      <div class="card" style="margin-top:15px;">
+        <h3>📖 ${l.name}</h3>
+        <p>الحضور: ${p}/${e}</p>
+        <table>
+          <thead><tr><th>الاسم</th><th>الرقم</th><th>الفصل</th><th>الحالة</th><th>الوقت</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  });
+}
+
+function closeDayDetails() {
+  document.getElementById('day-details').classList.add('hidden');
+}
+
+/* ==================== تبويب الطلاب ==================== */
+function renderStudentsTab() {
+  const students = DB.students;
+  const allT = document.getElementById('all-students-table');
+  allT.innerHTML = '';
+  if (students.length === 0) {
+    allT.innerHTML = '<tr><td colspan="4">لا يوجد طلاب مسجلين</td></tr>';
+  } else {
+    students.forEach(s=>{
+      allT.innerHTML += `<tr>
+        <td>${s.name}</td><td>${s.number}</td><td>${s.cls}</td>
+        <td><button class="btn btn-red" onclick="deleteStudent('${s.id}')">حذف</button></td>
+      </tr>`;
+    });
+  }
+}
+
+function deleteStudent(id) {
+  if (!confirm('حذف الطالب؟')) return;
+  DB.students = DB.students.filter(s=>s.id!==id);
+  renderStudentsTab();
+}
+
+/* ==================== مسح QR ==================== */
+function startScan() {
+  if (!activeLessonId) { alert('لا توجد حصة نشطة'); return; }
+  document.getElementById('start-scan-btn').classList.add('hidden');
+  document.getElementById('stop-scan-btn').classList.remove('hidden');
+
+  qrScanner = new Html5Qrcode("qr-reader");
+  qrScanner.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: { width: 250, height: 250 } },
+    onScanSuccess,
+    ()=>{}
+  ).catch(err=>{
+    document.getElementById('scan-msg').innerHTML = `<div class="alert alert-error">تعذر تشغيل الكاميرا: ${err}</div>`;
+  });
+}
+
+function stopScan() {
+  if (qrScanner) {
+    qrScanner.stop().then(()=>{
+      qrScanner.clear();
+      qrScanner = null;
+    }).catch(()=>{});
+  }
+  document.getElementById('start-scan-btn').classList.remove('hidden');
+  document.getElementById('stop-scan-btn').classList.add('hidden');
+}
+
+function onScanSuccess(decodedText) {
+  const lessons = DB.lessons;
+  const lesson = lessons.find(l=>l.id===activeLessonId);
+  if (!lesson) return;
+
+  const student = DB.students.find(s=>s.id===decodedText);
+  if (!student) { flashMsg('❌ QR غير معروف', 'error'); return; }
+  if (!lesson.enrolled.includes(student.id)) { flashMsg('⚠️ الطالب غير مسجل في هذه الحصة', 'error'); return; }
+  if (lesson.attendance[student.id]) { flashMsg('ℹ️ '+student.name+' سجل حضوره مسبقاً', 'info'); return; }
+
+  lesson.attendance[student.id] = { time: new Date().toISOString() };
+  DB.lessons = lessons;
+
+  speak('حضر ' + student.name);
+  flashMsg('✅ تم تسجيل حضور: '+student.name, 'success');
+  renderTodayTab();
+}
+
+function flashMsg(text, type) {
+  const el = document.getElementById('scan-msg');
+  el.innerHTML = `<div class="alert alert-${type}">${text}</div>`;
+  setTimeout(()=>{ el.innerHTML=''; }, 3000);
+}
+
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ar-SA';
+  u.rate = 1;
+  u.pitch = 1;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+
+/* ==================== استعادة الجلسة ==================== */
+(function init(){
+  const s = DB.session;
+  if (s.role === 'student') {
+    const st = DB.students.find(x=>x.id===s.id);
+    if (st) { showScreen('student-login'); enterStudentDashboard(st); return; }
+  }
+  if (s.role === 'teacher') {
+    showScreen('teacher-dashboard');
+    renderTodayTab();
+    return;
+  }
+  showScreen('home');
+})();
+</script>
+</body>
+</html>
