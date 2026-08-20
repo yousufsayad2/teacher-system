@@ -2,16 +2,16 @@ import streamlit as st
 import sqlite3
 import hashlib
 import secrets
-import io
+import json
 from datetime import datetime
 
-import qrcode
 import cv2
 import numpy as np
+import qrcode
 
 
 # =========================================================
-# إعداد التطبيق
+# إعدادات التطبيق
 # =========================================================
 
 st.set_page_config(
@@ -20,17 +20,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# قاعدة بيانات جديدة تمامًا
-DB = "teacher_system_v2.db"
+DB = "teacher_system_v3.db"
 
-APP_URL = "https://teacher-system-2t8fcv45z3sqh8zn75s38m.streamlit.app/"
-
-DEFAULT_PASSWORD = "123456"
-
-
-# =========================================================
-# الصفوف
-# =========================================================
+DEFAULT_TEACHER_PASSWORD = "123456"
 
 GRADES = [
     "الصف الأول الابتدائي",
@@ -39,11 +31,9 @@ GRADES = [
     "الصف الرابع الابتدائي",
     "الصف الخامس الابتدائي",
     "الصف السادس الابتدائي",
-
     "الصف الأول الإعدادي",
     "الصف الثاني الإعدادي",
     "الصف الثالث الإعدادي",
-
     "الصف الأول الثانوي",
     "الصف الثاني الثانوي",
     "الصف الثالث الثانوي",
@@ -54,15 +44,14 @@ GRADES = [
 # قاعدة البيانات
 # =========================================================
 
-def db():
-    conn = sqlite3.connect(DB, timeout=30)
+def get_conn():
+    conn = sqlite3.connect(DB, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
-
-    conn = db()
+    conn = get_conn()
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
@@ -74,11 +63,10 @@ def init_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS students (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token TEXT UNIQUE NOT NULL,
             name TEXT NOT NULL,
             grade TEXT NOT NULL,
-            phone TEXT NOT NULL UNIQUE,
-            guardian_phone TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            parent_phone TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
     """)
@@ -86,12 +74,12 @@ def init_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS lessons (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            token TEXT UNIQUE NOT NULL,
             grade TEXT NOT NULL,
-            title TEXT NOT NULL,
+            lesson_name TEXT NOT NULL,
+            token TEXT NOT NULL UNIQUE,
             started_at TEXT NOT NULL,
             ended_at TEXT,
-            active INTEGER NOT NULL DEFAULT 1
+            active INTEGER DEFAULT 1
         )
     """)
 
@@ -100,82 +88,169 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             lesson_id INTEGER NOT NULL,
             student_id INTEGER NOT NULL,
-            attended_at TEXT NOT NULL,
-
-            UNIQUE(lesson_id, student_id),
-
-            FOREIGN KEY(lesson_id)
-                REFERENCES lessons(id),
-
-            FOREIGN KEY(student_id)
-                REFERENCES students(id)
+            marked_at TEXT NOT NULL,
+            UNIQUE(lesson_id, student_id)
         )
     """)
 
-    password = conn.execute("""
-        SELECT value
-        FROM settings
-        WHERE key = 'teacher_password'
-    """).fetchone()
+    # باسورد المدرس الافتراضي
+    password_exists = conn.execute(
+        "SELECT value FROM settings WHERE key='teacher_password'"
+    ).fetchone()
 
-    if password is None:
-
-        conn.execute("""
-            INSERT INTO settings(key, value)
-            VALUES(?, ?)
-        """, (
-            "teacher_password",
-            hash_password(DEFAULT_PASSWORD)
-        ))
+    if password_exists is None:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES(?, ?)",
+            ("teacher_password", hash_password(DEFAULT_TEACHER_PASSWORD))
+        )
 
     conn.commit()
     conn.close()
 
 
-# =========================================================
-# أدوات
-# =========================================================
-
 def hash_password(password):
-    return hashlib.sha256(
-        password.encode("utf-8")
-    ).hexdigest()
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
-def now():
-    return datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-
-def get_password():
-
-    conn = db()
-
-    row = conn.execute("""
-        SELECT value
-        FROM settings
-        WHERE key = 'teacher_password'
-    """).fetchone()
-
+def check_teacher_password(password):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key='teacher_password'"
+    ).fetchone()
     conn.close()
 
-    return row["value"] if row else None
+    if row is None:
+        return False
+
+    return hash_password(password) == row["value"]
 
 
-def set_password(password):
+def change_teacher_password(new_password):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE settings SET value=? WHERE key='teacher_password'",
+        (hash_password(new_password),)
+    )
+    conn.commit()
+    conn.close()
 
-    conn = db()
+
+# =========================================================
+# الطلاب
+# =========================================================
+
+def find_student(phone):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM students WHERE phone=?",
+        (phone,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def add_student(name, grade, phone, parent_phone):
+    conn = get_conn()
+
+    existing = conn.execute(
+        "SELECT * FROM students WHERE phone=?",
+        (phone,)
+    ).fetchone()
+
+    if existing:
+        conn.close()
+        return existing
+
+    cur = conn.execute("""
+        INSERT INTO students
+        (name, grade, phone, parent_phone, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        name,
+        grade,
+        phone,
+        parent_phone,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ))
+
+    student_id = cur.lastrowid
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT * FROM students WHERE id=?",
+        (student_id,)
+    ).fetchone()
+
+    conn.close()
+    return row
+
+
+# =========================================================
+# الحصص
+# =========================================================
+
+def create_lesson(grade, lesson_name):
+    conn = get_conn()
+
+    # إنهاء أي حصة قديمة لنفس الصف
+    conn.execute(
+        "UPDATE lessons SET active=0 WHERE grade=? AND active=1",
+        (grade,)
+    )
+
+    token = secrets.token_urlsafe(24)
+
+    cur = conn.execute("""
+        INSERT INTO lessons
+        (grade, lesson_name, token, started_at, active)
+        VALUES (?, ?, ?, ?, 1)
+    """, (
+        grade,
+        lesson_name,
+        token,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ))
+
+    lesson_id = cur.lastrowid
+
+    conn.commit()
+    conn.close()
+
+    return lesson_id, token
+
+
+def get_active_lesson(grade=None):
+    conn = get_conn()
+
+    if grade:
+        row = conn.execute("""
+            SELECT * FROM lessons
+            WHERE grade=? AND active=1
+            ORDER BY id DESC
+            LIMIT 1
+        """, (grade,)).fetchone()
+    else:
+        row = conn.execute("""
+            SELECT * FROM lessons
+            WHERE active=1
+            ORDER BY id DESC
+            LIMIT 1
+        """).fetchone()
+
+    conn.close()
+    return row
+
+
+def end_lesson(lesson_id):
+    conn = get_conn()
 
     conn.execute("""
-        INSERT INTO settings(key, value)
-        VALUES(?, ?)
-
-        ON CONFLICT(key)
-        DO UPDATE SET value = excluded.value
+        UPDATE lessons
+        SET active=0, ended_at=?
+        WHERE id=?
     """, (
-        "teacher_password",
-        hash_password(password)
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        lesson_id
     ))
 
     conn.commit()
@@ -183,917 +258,723 @@ def set_password(password):
 
 
 # =========================================================
+# الحضور
+# =========================================================
+
+def mark_attendance(lesson_id, student_id):
+    conn = get_conn()
+
+    try:
+        conn.execute("""
+            INSERT INTO attendance
+            (lesson_id, student_id, marked_at)
+            VALUES (?, ?, ?)
+        """, (
+            lesson_id,
+            student_id,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ))
+
+        conn.commit()
+        success = True
+
+    except sqlite3.IntegrityError:
+        success = False
+
+    conn.close()
+    return success
+
+
+def get_attendance(lesson_id):
+    conn = get_conn()
+
+    rows = conn.execute("""
+        SELECT
+            students.id,
+            students.name,
+            students.grade,
+            students.phone,
+            students.parent_phone,
+            attendance.marked_at
+        FROM attendance
+        JOIN students
+        ON students.id = attendance.student_id
+        WHERE attendance.lesson_id=?
+        ORDER BY attendance.marked_at
+    """, (lesson_id,)).fetchall()
+
+    conn.close()
+    return rows
+
+
+def get_students_by_grade(grade):
+    conn = get_conn()
+
+    rows = conn.execute("""
+        SELECT *
+        FROM students
+        WHERE grade=?
+        ORDER BY name
+    """, (grade,)).fetchall()
+
+    conn.close()
+    return rows
+
+
+# =========================================================
 # QR
 # =========================================================
 
-def create_qr(text):
-
+def make_qr(token):
     qr = qrcode.QRCode(
-        version=1,
+        version=None,
         box_size=10,
         border=4
     )
 
-    qr.add_data(text)
+    data = json.dumps({
+        "type": "teacher_system_attendance",
+        "token": token
+    })
+
+    qr.add_data(data)
     qr.make(fit=True)
 
-    image = qr.make_image(
-        fill_color="black",
-        back_color="white"
-    )
-
-    buffer = io.BytesIO()
-
-    image.save(
-        buffer,
-        format="PNG"
-    )
-
-    return buffer.getvalue()
+    img = qr.make_image()
+    return img
 
 
-def read_qr(file):
-
-    if file is None:
+def read_qr(uploaded_file):
+    if uploaded_file is None:
         return None
 
     try:
-
-        raw = file.getvalue()
-
-        array = np.frombuffer(
-            raw,
+        file_bytes = np.asarray(
+            bytearray(uploaded_file.read()),
             dtype=np.uint8
         )
 
-        image = cv2.imdecode(
-            array,
-            cv2.IMREAD_COLOR
-        )
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+        if image is None:
+            return None
 
         detector = cv2.QRCodeDetector()
 
-        text, points, _ = detector.detectAndDecode(
-            image
-        )
+        data, points, _ = detector.detectAndDecode(image)
 
-        if text:
-            return text.strip()
+        if data:
+            try:
+                obj = json.loads(data)
+
+                if obj.get("type") == "teacher_system_attendance":
+                    return obj.get("token")
+
+            except Exception:
+                return None
 
     except Exception:
-        pass
+        return None
 
     return None
 
 
+def get_lesson_by_token(token):
+    conn = get_conn()
+
+    row = conn.execute("""
+        SELECT *
+        FROM lessons
+        WHERE token=? AND active=1
+        LIMIT 1
+    """, (token,)).fetchone()
+
+    conn.close()
+    return row
+
+
 # =========================================================
-# روابط
-# =========================================================
-
-def student_url(token):
-
-    return f"{APP_URL}?student={token}"
-
-
-def lesson_url(token):
-
-    return f"{APP_URL}?lesson={token}"
-
-
-# =========================================================
-# تشغيل قاعدة البيانات
+# Session
 # =========================================================
 
 init_db()
 
+if "teacher_logged" not in st.session_state:
+    st.session_state.teacher_logged = False
 
-# =========================================================
-# قراءة الرابط
-# =========================================================
-
-params = st.query_params
-
-student_token = params.get("student")
-lesson_token = params.get("lesson")
-
-teacher_mode = params.get("teacher") == "1"
+if "student_id" not in st.session_state:
+    st.session_state.student_id = None
 
 
 # =========================================================
-# دخول المدرس
+# الشكل العام
 # =========================================================
 
-def teacher_login():
+st.markdown(
+    """
+    <style>
+    .main-title {
+        text-align:center;
+        font-size:55px;
+        font-weight:bold;
+    }
 
-    st.title("🎓 Teacher System")
+    .subtitle {
+        text-align:center;
+        font-size:25px;
+        color:#999;
+        margin-bottom:40px;
+    }
 
-    st.header("🔐 دخول المدرس")
+    .big-number {
+        font-size:45px;
+        font-weight:bold;
+    }
 
-    password = st.text_input(
-        "كلمة المرور",
-        type="password"
-    )
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-    if st.button(
-        "دخول المدرس",
-        type="primary"
-    ):
+st.markdown(
+    '<div class="main-title">🎓 Teacher System</div>',
+    unsafe_allow_html=True
+)
 
-        saved = get_password()
-
-        if (
-            saved
-            and hash_password(password) == saved
-        ):
-
-            st.session_state.teacher = True
-            st.rerun()
-
-        else:
-
-            st.error(
-                "❌ كلمة المرور غير صحيحة"
-            )
-
-    st.info(
-        "كلمة المرور الافتراضية أول مرة: 123456"
-    )
+st.markdown(
+    '<div class="subtitle">نظام إدارة المدرس والحضور الذكي</div>',
+    unsafe_allow_html=True
+)
 
 
 # =========================================================
-# لوحة المدرس
+# اختيار نوع الدخول
 # =========================================================
 
-def teacher_dashboard():
+mode = st.radio(
+    "اختر نوع الدخول",
+    ["👨‍🏫 المدرس", "🧑‍🎓 الطالب"],
+    horizontal=True
+)
 
-    st.title("👨‍🏫 لوحة تحكم المدرس")
 
-    if st.button("🚪 تسجيل خروج"):
+# =========================================================
+# المدرس
+# =========================================================
 
-        st.session_state.teacher = False
-        st.rerun()
+if mode == "👨‍🏫 المدرس":
 
-    conn = db()
+    if not st.session_state.teacher_logged:
 
-    # =====================================================
-    # إحصائيات عامة
-    # =====================================================
+        st.header("👨‍🏫 دخول المدرس")
 
-    total_students = conn.execute("""
-        SELECT COUNT(*) AS c
-        FROM students
-    """).fetchone()["c"]
-
-    st.metric(
-        "👨‍🎓 إجمالي الطلاب المسجلين",
-        total_students
-    )
-
-    st.divider()
-
-    # =====================================================
-    # الحصة الحالية
-    # =====================================================
-
-    active = conn.execute("""
-        SELECT *
-        FROM lessons
-        WHERE active = 1
-        ORDER BY id DESC
-        LIMIT 1
-    """).fetchone()
-
-    if active:
-
-        lesson_id = active["id"]
-        grade = active["grade"]
-
-        st.success(
-            f"🟢 الحصة شغالة: {active['title']}"
+        password = st.text_input(
+            "🔐 باسورد المدرس",
+            type="password"
         )
 
-        st.write(
-            f"📚 الصف: **{grade}**"
-        )
+        if st.button("دخول المدرس", use_container_width=True):
 
-        st.write(
-            f"🕐 بداية الحصة: {active['started_at']}"
-        )
-
-        # ---------------------------------------------
-        # إجمالي طلاب الصف
-        # ---------------------------------------------
-
-        total = conn.execute("""
-            SELECT COUNT(*) AS c
-            FROM students
-            WHERE grade = ?
-        """, (
-            grade,
-        )).fetchone()["c"]
-
-        # ---------------------------------------------
-        # الحاضرين
-        # ---------------------------------------------
-
-        present = conn.execute("""
-            SELECT COUNT(*) AS c
-            FROM attendance
-            WHERE lesson_id = ?
-        """, (
-            lesson_id,
-        )).fetchone()["c"]
-
-        absent = max(
-            total - present,
-            0
-        )
-
-        # ---------------------------------------------
-        # الإحصائيات
-        # ---------------------------------------------
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.metric(
-                "🟢 الحاضر",
-                present
-            )
-
-        with c2:
-            st.metric(
-                "🔴 الغائب",
-                absent
-            )
-
-        with c3:
-            st.metric(
-                "👥 إجمالي الصف",
-                total
-            )
-
-        # ---------------------------------------------
-        # الحالة
-        # ---------------------------------------------
-
-        if total == 0:
-
-            st.warning(
-                "⚠️ لا يوجد طلاب مسجلون في هذا الصف."
-            )
-
-        elif present == total:
-
-            st.success(
-                "🎉 العدد اكتمل — كل الطلاب حضروا!"
-            )
-
-        else:
-
-            st.warning(
-                f"⚠️ لسه متبقي {absent} طالب لم يسجلوا الحضور."
-            )
-
-        st.divider()
-
-        # =================================================
-        # QR
-        # =================================================
-
-        st.header("📱 QR الخاص بالحصة")
-
-        qr_link = lesson_url(
-            active["token"]
-        )
-
-        st.image(
-            create_qr(qr_link),
-            width=350
-        )
-
-        st.code(qr_link)
+            if check_teacher_password(password):
+                st.session_state.teacher_logged = True
+                st.rerun()
+            else:
+                st.error("❌ الباسورد غير صحيح")
 
         st.info(
-            "📌 الطالب يمسح الكود من صفحة الطالب."
+            "الباسورد الافتراضي لأول تشغيل هو: 123456\n\n"
+            "بعد الدخول يمكنك تغييره من إعدادات المدرس."
         )
-
-        # =================================================
-        # الحاضرين
-        # =================================================
-
-        st.header("👨‍🎓 الحاضرون")
-
-        rows = conn.execute("""
-            SELECT
-                students.name,
-                students.grade,
-                students.phone,
-                students.guardian_phone,
-                attendance.attended_at
-
-            FROM attendance
-
-            JOIN students
-            ON students.id =
-               attendance.student_id
-
-            WHERE attendance.lesson_id = ?
-
-            ORDER BY attendance.attended_at
-        """, (
-            lesson_id,
-        )).fetchall()
-
-        if rows:
-
-            data = []
-
-            for row in rows:
-
-                data.append({
-                    "اسم الطالب": row["name"],
-                    "الصف": row["grade"],
-                    "رقم الطالب": row["phone"],
-                    "رقم ولي الأمر": row["guardian_phone"],
-                    "وقت الحضور": row["attended_at"]
-                })
-
-            st.dataframe(
-                data,
-                use_container_width=True,
-                hide_index=True
-            )
-
-        else:
-
-            st.info(
-                "لم يسجل أي طالب الحضور حتى الآن."
-            )
-
-        # =================================================
-        # إنهاء الحصة
-        # =================================================
-
-        st.divider()
-
-        if st.button(
-            "🔴 إنهاء الحصة وحساب الغياب",
-            type="primary"
-        ):
-
-            conn.execute("""
-                UPDATE lessons
-
-                SET
-                    active = 0,
-                    ended_at = ?
-
-                WHERE id = ?
-            """, (
-                now(),
-                lesson_id
-            ))
-
-            conn.commit()
-
-            st.success(
-                f"تم إنهاء الحصة — الحاضر: {present} — الغائب: {absent}"
-            )
-
-            conn.close()
-
-            st.rerun()
-
-    # =====================================================
-    # إنشاء حصة
-    # =====================================================
 
     else:
 
-        st.info(
-            "🔵 لا توجد حصة نشطة الآن."
-        )
+        st.success("🟢 تم تسجيل دخول المدرس")
 
-        st.header("➕ إنشاء حصة جديدة")
+        if st.button("🚪 تسجيل خروج"):
+            st.session_state.teacher_logged = False
+            st.rerun()
 
-        grade = st.selectbox(
-            "اختر الصف",
-            GRADES
-        )
+        st.header("👨‍🏫 لوحة تحكم المدرس")
 
-        title = st.text_input(
-            "اسم الحصة",
-            "الحصة الحالية"
-        )
+        tabs = st.tabs([
+            "📚 إنشاء حصة",
+            "📊 الحصة الحالية",
+            "👥 الطلاب",
+            "⚙️ الإعدادات"
+        ])
 
-        if st.button(
-            "🟢 بدء الحصة",
-            type="primary"
-        ):
+        # -------------------------------------------------
+        # إنشاء حصة
+        # -------------------------------------------------
 
-            token = secrets.token_urlsafe(32)
+        with tabs[0]:
 
-            conn.execute("""
-                INSERT INTO lessons(
-                    token,
+            st.subheader("➕ إنشاء حصة جديدة")
+
+            grade = st.selectbox(
+                "الصف",
+                GRADES
+            )
+
+            lesson_name = st.text_input(
+                "اسم الحصة",
+                value="الحصة الحالية"
+            )
+
+            if st.button(
+                "🟢 بدء الحصة",
+                use_container_width=True
+            ):
+
+                lesson_id, token = create_lesson(
                     grade,
-                    title,
-                    started_at,
-                    active
+                    lesson_name
                 )
 
-                VALUES(
-                    ?, ?, ?, ?, 1
+                st.session_state.current_lesson_id = lesson_id
+
+                st.success("✅ تم بدء الحصة")
+
+                st.subheader("📱 QR الخاص بالحصة")
+
+                qr_img = make_qr(token)
+
+                st.image(
+                    qr_img,
+                    caption="الطلاب يصورون هذا QR لتسجيل الحضور"
                 )
-            """, (
-                token,
-                grade,
-                title,
-                now()
-            ))
 
-            conn.commit()
-
-            conn.close()
-
-            st.success(
-                "✅ تم إنشاء الحصة."
-            )
-
-            st.rerun()
-
-    # =====================================================
-    # جميع الطلاب
-    # =====================================================
-
-    st.divider()
-
-    st.header("👨‍🎓 جميع الطلاب المسجلين")
-
-    students = conn.execute("""
-        SELECT
-            name,
-            grade,
-            phone,
-            guardian_phone,
-            created_at
-
-        FROM students
-
-        ORDER BY id DESC
-    """).fetchall()
-
-    if students:
-
-        data = []
-
-        for row in students:
-
-            data.append({
-                "اسم الطالب": row["name"],
-                "الصف": row["grade"],
-                "رقم الطالب": row["phone"],
-                "رقم ولي الأمر": row["guardian_phone"],
-                "تاريخ التسجيل": row["created_at"]
-            })
-
-        st.dataframe(
-            data,
-            use_container_width=True,
-            hide_index=True
-        )
-
-    else:
-
-        st.info(
-            "لا يوجد طلاب مسجلون."
-        )
-
-    # =====================================================
-    # تغيير الباسورد
-    # =====================================================
-
-    st.divider()
-
-    st.header("🔑 تغيير باسورد المدرس")
-
-    old_password = st.text_input(
-        "الباسورد الحالي",
-        type="password"
-    )
-
-    new_password = st.text_input(
-        "الباسورد الجديد",
-        type="password"
-    )
-
-    confirm = st.text_input(
-        "تأكيد الباسورد الجديد",
-        type="password"
-    )
-
-    if st.button(
-        "💾 حفظ الباسورد الجديد"
-    ):
-
-        if hash_password(old_password) != get_password():
-
-            st.error(
-                "❌ الباسورد الحالي غلط."
-            )
-
-        elif len(new_password) < 4:
-
-            st.error(
-                "❌ الباسورد لازم يكون 4 أحرف/أرقام على الأقل."
-            )
-
-        elif new_password != confirm:
-
-            st.error(
-                "❌ الباسورد الجديد وتأكيده غير متطابقين."
-            )
-
-        else:
-
-            set_password(new_password)
-
-            st.success(
-                "✅ تم تغيير باسورد المدرس."
-            )
-
-    conn.close()
-
-
-# =========================================================
-# تسجيل الطالب
-# =========================================================
-
-def student_registration():
-
-    st.title("🎓 Teacher System")
-
-    st.header("📝 تسجيل الطالب")
-
-    st.info(
-        "التسجيل ده يتم مرة واحدة فقط."
-    )
-
-    name = st.text_input(
-        "👤 اسم الطالب بالكامل"
-    )
-
-    grade = st.selectbox(
-        "📚 الصف",
-        GRADES
-    )
-
-    phone = st.text_input(
-        "📱 رقم الطالب"
-    )
-
-    guardian = st.text_input(
-        "👨‍👩‍👦 رقم ولي الأمر"
-    )
-
-    if st.button(
-        "✅ تسجيل الطالب",
-        type="primary"
-    ):
-
-        name = name.strip()
-        phone = phone.strip()
-        guardian = guardian.strip()
-
-        if not name:
-
-            st.error("اكتب اسم الطالب.")
-            return
-
-        if not phone:
-
-            st.error("اكتب رقم الطالب.")
-            return
-
-        if not guardian:
-
-            st.error("اكتب رقم ولي الأمر.")
-            return
-
-        conn = db()
-
-        exists = conn.execute("""
-            SELECT id
-            FROM students
-            WHERE phone = ?
-        """, (
-            phone,
-        )).fetchone()
-
-        if exists:
-
-            st.error(
-                "❌ الرقم ده مسجل بالفعل."
-            )
-
-            conn.close()
-            return
-
-        token = secrets.token_urlsafe(32)
-
-        conn.execute("""
-            INSERT INTO students(
-                token,
-                name,
-                grade,
-                phone,
-                guardian_phone,
-                created_at
-            )
-
-            VALUES(
-                ?, ?, ?, ?, ?, ?
-            )
-        """, (
-            token,
-            name,
-            grade,
-            phone,
-            guardian,
-            now()
-        ))
-
-        conn.commit()
-        conn.close()
-
-        url = student_url(token)
-
-        st.success(
-            "🎉 تم التسجيل بنجاح!"
-        )
-
-        st.warning(
-            "⚠️ احفظ رابط الطالب ده، لأنه هيكون صفحتك الخاصة."
-        )
-
-        st.code(url)
-
-        st.link_button(
-            "📱 فتح صفحة الطالب",
-            url
-        )
-
-
-# =========================================================
-# صفحة الطالب
-# =========================================================
-
-def student_page(token):
-
-    conn = db()
-
-    student = conn.execute("""
-        SELECT *
-        FROM students
-        WHERE token = ?
-    """, (
-        token,
-    )).fetchone()
-
-    if not student:
-
-        conn.close()
-
-        st.error(
-            "❌ رابط الطالب غير صحيح."
-        )
-
-        return
-
-    st.title(
-        f"👋 أهلاً {student['name']}"
-    )
-
-    st.write(
-        f"📚 الصف: **{student['grade']}**"
-    )
-
-    st.info(
-        "📱 دي صفحة الطالب فقط."
-    )
-
-    # =====================================================
-    # الحصة
-    # =====================================================
-
-    lesson = conn.execute("""
-        SELECT *
-        FROM lessons
-        WHERE active = 1
-        ORDER BY id DESC
-        LIMIT 1
-    """).fetchone()
-
-    if not lesson:
-
-        conn.close()
-
-        st.warning(
-            "🔴 لا توجد حصة نشطة حاليًا."
-        )
-
-        return
-
-    # =====================================================
-    # الصف
-    # =====================================================
-
-    if lesson["grade"] != student["grade"]:
-
-        conn.close()
-
-        st.warning(
-            "⚠️ لا توجد حصة حاليًا لصفك."
-        )
-
-        return
-
-    st.success(
-        f"🟢 الحصة الحالية: {lesson['title']}"
-    )
-
-    st.header(
-        "📷 تسجيل الحضور"
-    )
-
-    st.write(
-        "وجّه كاميرا الموبايل إلى QR الموجود عند المدرس."
-    )
-
-    picture = st.camera_input(
-        "📷 مسح QR الحصة"
-    )
-
-    if picture:
-
-        scanned = read_qr(
-            picture
-        )
-
-        if not scanned:
-
-            st.error(
-                "❌ لم يتم التعرف على QR."
-            )
-
-        else:
-
-            expected = lesson_url(
-                lesson["token"]
-            )
-
-            if scanned != expected:
-
-                st.error(
-                    "❌ QR غير صحيح أو خاص بحصة أخرى."
+                st.info(
+                    "📌 كل طالب يتم تسجيله مرة واحدة فقط في نفس الحصة."
                 )
+
+        # -------------------------------------------------
+        # الحصة الحالية
+        # -------------------------------------------------
+
+        with tabs[1]:
+
+            st.subheader("📊 الحصة الحالية")
+
+            lesson = get_active_lesson()
+
+            if lesson is None:
+
+                st.warning("🔴 لا توجد حصة نشطة حالياً.")
 
             else:
 
-                already = conn.execute("""
-                    SELECT id
+                st.success(
+                    f"🟢 {lesson['lesson_name']} — {lesson['grade']}"
+                )
 
-                    FROM attendance
+                attendance = get_attendance(
+                    lesson["id"]
+                )
 
-                    WHERE lesson_id = ?
+                students = get_students_by_grade(
+                    lesson["grade"]
+                )
 
-                    AND student_id = ?
-                """, (
-                    lesson["id"],
-                    student["id"]
-                )).fetchone()
+                total = len(students)
+                present = len(attendance)
+                absent = max(total - present, 0)
 
-                if already:
+                col1, col2, col3 = st.columns(3)
 
-                    st.warning(
-                        "⚠️ أنت مسجل حضور بالفعل."
+                with col1:
+                    st.metric(
+                        "👥 إجمالي الطلاب",
+                        total
+                    )
+
+                with col2:
+                    st.metric(
+                        "✅ الحاضرين",
+                        present
+                    )
+
+                with col3:
+                    st.metric(
+                        "❌ الغائبين",
+                        absent
+                    )
+
+                if total > 0:
+
+                    if present == total:
+                        st.success(
+                            "🎉 العدد اكتمل — كل الطلاب حضروا!"
+                        )
+                    else:
+                        st.warning(
+                            f"⏳ لسه في {absent} طالب لم يسجلوا حضور."
+                        )
+
+                st.divider()
+
+                st.subheader("✅ الطلاب الحاضرين")
+
+                if attendance:
+
+                    for student in attendance:
+
+                        st.success(
+                            f"👨‍🎓 {student['name']} | "
+                            f"📞 {student['phone']} | "
+                            f"ولي الأمر: {student['parent_phone']}"
+                        )
+
+                else:
+                    st.info("لا يوجد حضور حتى الآن.")
+
+                st.divider()
+
+                st.subheader("❌ الطلاب الغائبون")
+
+                present_ids = {
+                    row["id"] for row in attendance
+                }
+
+                absent_students = [
+                    s for s in students
+                    if s["id"] not in present_ids
+                ]
+
+                if absent_students:
+
+                    for student in absent_students:
+
+                        st.error(
+                            f"❌ {student['name']} | "
+                            f"📞 {student['phone']} | "
+                            f"ولي الأمر: {student['parent_phone']}"
+                        )
+
+                else:
+
+                    st.success("لا يوجد غياب 🎉")
+
+                st.divider()
+
+                qr_img = make_qr(
+                    lesson["token"]
+                )
+
+                st.subheader("📱 QR الحصة")
+
+                st.image(qr_img)
+
+                if st.button(
+                    "🔴 إنهاء الحصة",
+                    use_container_width=True
+                ):
+
+                    end_lesson(lesson["id"])
+
+                    st.success(
+                        "✅ تم إنهاء الحصة وحساب الحضور والغياب."
+                    )
+
+                    st.rerun()
+
+        # -------------------------------------------------
+        # الطلاب
+        # -------------------------------------------------
+
+        with tabs[2]:
+
+            st.subheader("👥 جميع الطلاب")
+
+            grade_filter = st.selectbox(
+                "اختار الصف",
+                ["كل الصفوف"] + GRADES
+            )
+
+            conn = get_conn()
+
+            if grade_filter == "كل الصفوف":
+
+                rows = conn.execute("""
+                    SELECT *
+                    FROM students
+                    ORDER BY name
+                """).fetchall()
+
+            else:
+
+                rows = conn.execute("""
+                    SELECT *
+                    FROM students
+                    WHERE grade=?
+                    ORDER BY name
+                """, (grade_filter,)).fetchall()
+
+            conn.close()
+
+            st.metric(
+                "👨‍🎓 عدد الطلاب",
+                len(rows)
+            )
+
+            for student in rows:
+
+                with st.expander(
+                    f"👨‍🎓 {student['name']} — {student['grade']}"
+                ):
+
+                    st.write(
+                        f"📞 رقم الطالب: {student['phone']}"
+                    )
+
+                    st.write(
+                        f"👨‍👩‍👦 رقم ولي الأمر: "
+                        f"{student['parent_phone']}"
+                    )
+
+        # -------------------------------------------------
+        # الإعدادات
+        # -------------------------------------------------
+
+        with tabs[3]:
+
+            st.subheader("⚙️ إعدادات المدرس")
+
+            st.write(
+                "تغيير باسورد دخول لوحة المدرس"
+            )
+
+            old_password = st.text_input(
+                "الباسورد الحالي",
+                type="password"
+            )
+
+            new_password = st.text_input(
+                "الباسورد الجديد",
+                type="password"
+            )
+
+            confirm_password = st.text_input(
+                "تأكيد الباسورد الجديد",
+                type="password"
+            )
+
+            if st.button(
+                "🔐 تغيير الباسورد",
+                use_container_width=True
+            ):
+
+                if not check_teacher_password(
+                    old_password
+                ):
+                    st.error(
+                        "❌ الباسورد الحالي غير صحيح."
+                    )
+
+                elif len(new_password) < 4:
+                    st.error(
+                        "❌ الباسورد الجديد يجب أن يكون 4 أحرف/أرقام على الأقل."
+                    )
+
+                elif new_password != confirm_password:
+                    st.error(
+                        "❌ الباسوردان غير متطابقين."
                     )
 
                 else:
 
-                    conn.execute("""
-                        INSERT INTO attendance(
-                            lesson_id,
-                            student_id,
-                            attended_at
-                        )
-
-                        VALUES(
-                            ?, ?, ?
-                        )
-                    """, (
-                        lesson["id"],
-                        student["id"],
-                        now()
-                    ))
-
-                    conn.commit()
+                    change_teacher_password(
+                        new_password
+                    )
 
                     st.success(
-                        "✅ تم تسجيل حضورك بنجاح!"
+                        "✅ تم تغيير باسورد المدرس بنجاح."
                     )
 
-                    st.balloons()
-
-                    st.info(
-                        "👨‍🏫 تم تسجيل حضورك عند المدرس."
-                    )
-
-    conn.close()
-
 
 # =========================================================
-# صفحة QR الخاص بالحصة
+# الطالب
 # =========================================================
-
-def lesson_page(token):
-
-    conn = db()
-
-    lesson = conn.execute("""
-        SELECT *
-        FROM lessons
-        WHERE token = ?
-    """, (
-        token,
-    )).fetchone()
-
-    conn.close()
-
-    if not lesson:
-
-        st.error(
-            "❌ QR غير صالح."
-        )
-
-        return
-
-    st.title(
-        "📚 Teacher System"
-    )
-
-    st.warning(
-        "⚠️ QR الحصة ده لازم يتم مسحه من صفحة الطالب الخاصة به."
-    )
-
-    st.write(
-        f"الحصة: **{lesson['title']}**"
-    )
-
-    st.write(
-        f"الصف: **{lesson['grade']}**"
-    )
-
-
-# =========================================================
-# التوجيه
-# =========================================================
-
-if teacher_mode:
-
-    if st.session_state.get(
-        "teacher",
-        False
-    ):
-
-        teacher_dashboard()
-
-    else:
-
-        teacher_login()
-
-elif student_token:
-
-    student_page(
-        student_token
-    )
-
-elif lesson_token:
-
-    lesson_page(
-        lesson_token
-    )
 
 else:
 
-    student_registration()
+    st.header("🧑‍🎓 تسجيل حضور الطالب")
 
+    # -----------------------------------------------------
+    # لو الطالب لسه مسجلش بياناته
+    # -----------------------------------------------------
 
-# =========================================================
-# نهاية
-# =========================================================
+    if st.session_state.student_id is None:
 
-st.caption(
-    "Teacher System • Smart Attendance"
-    )
+        st.info(
+            "👋 أول مرة فقط: سجل بياناتك، وبعدها تقدر تسجل حضورك في الحصص."
+        )
+
+        name = st.text_input(
+            "👤 اسم الطالب بالكامل"
+        )
+
+        grade = st.selectbox(
+            "🎓 الصف",
+            GRADES
+        )
+
+        phone = st.text_input(
+            "📱 رقم الطالب"
+        )
+
+        parent_phone = st.text_input(
+            "👨‍👩‍👦 رقم ولي الأمر"
+        )
+
+        if st.button(
+            "💾 تسجيل بياناتي",
+            use_container_width=True
+        ):
+
+            if not name.strip():
+                st.error("❌ اكتب اسم الطالب.")
+
+            elif not phone.strip():
+                st.error("❌ اكتب رقم الطالب.")
+
+            elif not parent_phone.strip():
+                st.error("❌ اكتب رقم ولي الأمر.")
+
+            else:
+
+                student = add_student(
+                    name.strip(),
+                    grade,
+                    phone.strip(),
+                    parent_phone.strip()
+                )
+
+                st.session_state.student_id = student["id"]
+
+                st.success(
+                    "✅ تم تسجيل بياناتك بنجاح."
+                )
+
+                st.rerun()
+
+    # -----------------------------------------------------
+    # الطالب مسجل بالفعل
+    # -----------------------------------------------------
+
+    else:
+
+        conn = get_conn()
+
+        student = conn.execute(
+            "SELECT * FROM students WHERE id=?",
+            (st.session_state.student_id,)
+        ).fetchone()
+
+        conn.close()
+
+        if student is None:
+
+            st.session_state.student_id = None
+            st.rerun()
+
+        st.success(
+            f"👋 أهلاً {student['name']}"
+        )
+
+        st.write(
+            f"🎓 الصف: {student['grade']}"
+        )
+
+        st.write(
+            f"📱 رقمك: {student['phone']}"
+        )
+
+        st.write(
+            f"👨‍👩‍👦 ولي الأمر: {student['parent_phone']}"
+        )
+
+        st.divider()
+
+        lesson = get_active_lesson(
+            student["grade"]
+        )
+
+        if lesson is None:
+
+            st.warning(
+                "🔴 لا توجد حصة نشطة لصفك حالياً."
+            )
+
+        else:
+
+            st.success(
+                f"🟢 الحصة الحالية: {lesson['lesson_name']}"
+            )
+
+            st.info(
+                "📷 افتح الكاميرا وصوّر QR الحصة الموجود عند المدرس."
+            )
+
+            camera = st.camera_input(
+                "📸 تصوير QR الحصة"
+            )
+
+            if camera is not None:
+
+                token = read_qr(camera)
+
+                if not token:
+
+                    st.error(
+                        "❌ لم يتم التعرف على QR. "
+                        "قرب الكاميرا من الكود وحاول مرة أخرى."
+                    )
+
+                else:
+
+                    lesson_from_qr = get_lesson_by_token(
+                        token
+                    )
+
+                    if lesson_from_qr is None:
+
+                        st.error(
+                            "❌ QR غير صالح أو الحصة انتهت."
+                        )
+
+                    elif lesson_from_qr["grade"] != student["grade"]:
+
+                        st.error(
+                            "❌ هذا QR خاص بصف آخر."
+                        )
+
+                    else:
+
+                        success = mark_attendance(
+                            lesson_from_qr["id"],
+                            student["id"]
+                        )
+
+                        if success:
+
+                            st.success(
+                                "✅ تم تسجيل حضورك بنجاح!"
+                            )
+
+                            st.balloons()
+
+                        else:
+
+                            st.warning(
+                                "⚠️ أنت مسجل حضور بالفعل في هذه الحصة."
+                            )
+
+        st.divider()
+
+        if st.button(
+            "🔄 تغيير الطالب على هذا الجهاز"
+        ):
+
+            st.session_state.student_id = None
+            st.rerun()
