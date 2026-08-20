@@ -83,6 +83,7 @@ st.markdown(
 # =========================================================
 
 def db():
+
     conn = sqlite3.connect(
         DB_FILE,
         timeout=30,
@@ -903,9 +904,7 @@ def student_register():
 
         st.query_params["page"] = "student"
 
-        st.query_params["student"] = str(
-            sid
-        )
+        st.query_params["student"] = str(sid)
 
         st.rerun()
 
@@ -2058,13 +2057,13 @@ def statistics():
 
 
 # =========================================================
-# STUDENTS
+# STUDENTS MANAGEMENT
 # =========================================================
 
 def students():
 
     st.subheader(
-        "👨‍🎓 الطلاب المسجلون"
+        "👨‍🎓 إدارة الطلاب"
     )
 
     conn = db()
@@ -2090,47 +2089,127 @@ def students():
 
         conn.close()
 
-    st.metric(
+    # -----------------------------------------------------
+    # SUMMARY
+    # -----------------------------------------------------
+
+    total_students = len(rows)
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
         "👨‍🎓 إجمالي الطلاب",
-        len(rows),
+        total_students,
     )
 
-    search = st.text_input(
-        "🔎 بحث بالاسم أو الهاتف",
-        key="students_search",
-    ).strip()
+    c2.metric(
+        "👥 المجموعات",
+        len(GROUPS),
+    )
+
+    c3.metric(
+        "🎓 الصفوف",
+        len(GRADES),
+    )
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # SEARCH
+    # -----------------------------------------------------
+
+    st.markdown(
+        "### 🔎 البحث والفلترة"
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+
+        search = st.text_input(
+            "🔎 الاسم أو الهاتف",
+            key="students_search_new",
+        ).strip()
+
+    with c2:
+
+        grade_filter = st.selectbox(
+            "🎓 الصف",
+            ["كل الصفوف"] + GRADES,
+            key="students_grade_filter",
+        )
+
+    with c3:
+
+        group_filter = st.selectbox(
+            "👥 المجموعة",
+            ["كل المجموعات"] + GROUPS,
+            key="students_group_filter",
+        )
 
     filtered = []
 
     for row in rows:
 
+        if search:
+
+            search_lower = search.lower()
+
+            name_match = (
+                search_lower
+                in row["name"].lower()
+            )
+
+            phone_match = (
+                search
+                in row["phone"]
+            )
+
+            if not name_match and not phone_match:
+
+                continue
+
         if (
-            not search
-            or search.lower()
-            in row["name"].lower()
-            or search
-            in row["phone"]
+            grade_filter != "كل الصفوف"
+            and row["grade"] != grade_filter
         ):
 
-            filtered.append(row)
+            continue
 
-    table = []
+        if (
+            group_filter != "كل المجموعات"
+            and row["group_name"] != group_filter
+        ):
 
-    for row in filtered:
+            continue
 
-        table.append(
-            {
-                "ID": row["id"],
-                "الاسم": row["name"],
-                "الهاتف": row["phone"],
-                "ولي الأمر": row["parent_phone"],
-                "الصف": row["grade"],
-                "المجموعة": row["group_name"],
-                "تاريخ التسجيل": row["created_at"],
-            }
-        )
+        filtered.append(row)
 
-    if table:
+    st.info(
+        f"👨‍🎓 عدد النتائج: {len(filtered)}"
+    )
+
+    # -----------------------------------------------------
+    # TABLE
+    # -----------------------------------------------------
+
+    if filtered:
+
+        table = []
+
+        for row in filtered:
+
+            table.append(
+                {
+                    "ID": row["id"],
+                    "👨‍🎓 الاسم": row["name"],
+                    "📱 الهاتف": row["phone"],
+                    "👪 ولي الأمر": row["parent_phone"],
+                    "🎓 الصف": row["grade"],
+                    "👥 المجموعة": row["group_name"],
+                    "📅 التسجيل": row["created_at"],
+                }
+            )
 
         st.dataframe(
             table,
@@ -2140,658 +2219,362 @@ def students():
 
     else:
 
+        st.warning(
+            "📭 لا يوجد طلاب مطابقون للبحث."
+        )
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # EDIT STUDENT
+    # -----------------------------------------------------
+
+    st.markdown(
+        "### ✏️ تعديل بيانات طالب"
+    )
+
+    if not rows:
+
         st.info(
-            "📭 لا يوجد طلاب."
+            "📭 لا يوجد طلاب لتعديلهم."
         )
-
-
-# =========================================================
-# ANALYTICS
-# =========================================================
-
-def analytics():
-
-    st.subheader(
-        "📊 التحليلات المتقدمة"
-    )
-
-    conn = db()
-
-    try:
-
-        students_rows = conn.execute(
-            """
-            SELECT
-                id,
-                name,
-                phone,
-                grade,
-                group_name
-            FROM students
-            ORDER BY name
-            """
-        ).fetchall()
-
-        # =================================================
-        # FEATURE 1
-        # ATTENDANCE BY GRADE
-        # =================================================
-
-        st.markdown(
-            "### 📈 نسبة الحضور حسب الصف"
-        )
-
-        grade_table = []
-
-        for grade in GRADES:
-
-            total = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM lesson_students ls
-                JOIN lessons l
-                ON l.id = ls.lesson_id
-                WHERE l.active = 0
-                AND l.grade = ?
-                """,
-                (grade,),
-            ).fetchone()[0]
-
-            present = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM attendance a
-                JOIN lessons l
-                ON l.id = a.lesson_id
-                WHERE l.active = 0
-                AND l.grade = ?
-                """,
-                (grade,),
-            ).fetchone()[0]
-
-            absent = total - present
-
-            percentage = (
-                present / total * 100
-                if total
-                else 0
-            )
-
-            grade_table.append(
-                {
-                    "الصف": grade,
-                    "إجمالي الحضور المتوقع": total,
-                    "الحضور": present,
-                    "الغياب": absent,
-                    "نسبة الحضور": (
-                        f"{percentage:.1f}%"
-                    ),
-                }
-            )
-
-        st.dataframe(
-            grade_table,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.divider()
-
-        # =================================================
-        # FEATURE 2
-        # TOP STUDENTS
-        # =================================================
-
-        st.markdown(
-            "### 🏆 أكثر الطلاب حضورًا"
-        )
-
-        top_table = []
-
-        for student in students_rows:
-
-            total = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM lesson_students ls
-                JOIN lessons l
-                ON l.id = ls.lesson_id
-                WHERE ls.student_id = ?
-                AND l.active = 0
-                """,
-                (student["id"],),
-            ).fetchone()[0]
-
-            present = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM attendance a
-                JOIN lessons l
-                ON l.id = a.lesson_id
-                WHERE a.student_id = ?
-                AND l.active = 0
-                """,
-                (student["id"],),
-            ).fetchone()[0]
-
-            absent = total - present
-
-            percentage = (
-                present / total * 100
-                if total
-                else 0
-            )
-
-            if total > 0:
-
-                top_table.append(
-                    {
-                        "الطالب": student["name"],
-                        "الصف": student["grade"],
-                        "المجموعة": student["group_name"],
-                        "الحضور": present,
-                        "الغياب": absent,
-                        "النسبة": percentage,
-                    }
-                )
-
-        top_table.sort(
-            key=lambda x: x["النسبة"],
-            reverse=True,
-        )
-
-        top_table = top_table[:10]
-
-        for row in top_table:
-
-            row["النسبة"] = (
-                f"{row['النسبة']:.1f}%"
-            )
-
-        if top_table:
-
-            st.dataframe(
-                top_table,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        else:
-
-            st.info(
-                "📭 لا توجد بيانات حضور."
-            )
-
-        st.divider()
-
-        # =================================================
-        # FEATURE 3
-        # ABSENT STUDENTS
-        # =================================================
-
-        st.markdown(
-            "### ⚠️ الطلاب أصحاب الغياب الكثير"
-        )
-
-        absent_table = []
-
-        for student in students_rows:
-
-            total = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM lesson_students ls
-                JOIN lessons l
-                ON l.id = ls.lesson_id
-                WHERE ls.student_id = ?
-                AND l.active = 0
-                """,
-                (student["id"],),
-            ).fetchone()[0]
-
-            present = conn.execute(
-                """
-                SELECT COUNT(*)
-                FROM attendance a
-                JOIN lessons l
-                ON l.id = a.lesson_id
-                WHERE a.student_id = ?
-                AND l.active = 0
-                """,
-                (student["id"],),
-            ).fetchone()[0]
-
-            absent = total - present
-
-            percentage = (
-                absent / total * 100
-                if total
-                else 0
-            )
-
-            if absent > 0:
-
-                absent_table.append(
-                    {
-                        "الطالب": student["name"],
-                        "الصف": student["grade"],
-                        "المجموعة": student["group_name"],
-                        "الحصص": total,
-                        "الحضور": present,
-                        "الغياب": absent,
-                        "نسبة الغياب": percentage,
-                    }
-                )
-
-        absent_table.sort(
-            key=lambda x: (
-                x["الغياب"],
-                x["نسبة الغياب"],
-            ),
-            reverse=True,
-        )
-
-        absent_table = absent_table[:20]
-
-        for row in absent_table:
-
-            row["نسبة الغياب"] = (
-                f"{row['نسبة الغياب']:.1f}%"
-            )
-
-        if absent_table:
-
-            st.dataframe(
-                absent_table,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        else:
-
-            st.success(
-                "🎉 لا يوجد غياب حتى الآن."
-            )
-
-        st.divider()
-
-        # =================================================
-        # FEATURE 4
-        # GROUP STATISTICS
-        # =================================================
-
-        st.markdown(
-            "### 👥 إحصائيات المجموعات"
-        )
-
-        group_table = []
-
-        for grade in GRADES:
-
-            for group in GROUPS:
-
-                students_count = conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM students
-                    WHERE grade = ?
-                    AND group_name = ?
-                    """,
-                    (
-                        grade,
-                        group,
-                    ),
-                ).fetchone()[0]
-
-                total = conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM lesson_students ls
-                    JOIN lessons l
-                    ON l.id = ls.lesson_id
-                    WHERE l.active = 0
-                    AND l.grade = ?
-                    AND l.group_name = ?
-                    """,
-                    (
-                        grade,
-                        group,
-                    ),
-                ).fetchone()[0]
-
-                present = conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM attendance a
-                    JOIN lessons l
-                    ON l.id = a.lesson_id
-                    WHERE l.active = 0
-                    AND l.grade = ?
-                    AND l.group_name = ?
-                    """,
-                    (
-                        grade,
-                        group,
-                    ),
-                ).fetchone()[0]
-
-                absent = total - present
-
-                percentage = (
-                    present / total * 100
-                    if total
-                    else 0
-                )
-
-                group_table.append(
-                    {
-                        "الصف": grade,
-                        "المجموعة": group,
-                        "الطلاب": students_count,
-                        "المتبقي": (
-                            GROUP_LIMIT
-                            - students_count
-                        ),
-                        "الحضور": present,
-                        "الغياب": absent,
-                        "نسبة الحضور": (
-                            f"{percentage:.1f}%"
-                        ),
-                    }
-                )
-
-        st.dataframe(
-            group_table,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.divider()
-
-        # =================================================
-        # FEATURE 5
-        # SEARCH STUDENT
-        # =================================================
-
-        st.markdown(
-            "### 🔎 البحث عن طالب"
-        )
-
-        search = st.text_input(
-            "اكتب اسم الطالب أو رقم الهاتف",
-            key="analytics_search",
-        ).strip()
-
-        if search:
-
-            matches = []
-
-            for student in students_rows:
-
-                if (
-                    search.lower()
-                    in student["name"].lower()
-                    or search
-                    in student["phone"]
-                ):
-
-                    matches.append(student)
-
-            if not matches:
-
-                st.warning(
-                    "❌ لم يتم العثور على الطالب."
-                )
-
-            else:
-
-                options = []
-
-                for student in matches:
-
-                    options.append(
-                        f"{student['name']} | "
-                        f"{student['grade']} | "
-                        f"{student['group_name']}"
-                    )
-
-                selected = st.selectbox(
-                    "اختر الطالب",
-                    options,
-                    key="analytics_selected_student",
-                )
-
-                selected_student = matches[
-                    options.index(selected)
-                ]
-
-                st.success(
-                    f"""
-👨‍🎓 الاسم: {selected_student['name']}
-
-🎓 الصف: {selected_student['grade']}
-
-👥 المجموعة: {selected_student['group_name']}
-
-📱 الهاتف: {selected_student['phone']}
-                    """
-                )
-
-                (
-                    total,
-                    present,
-                    absent,
-                    percentage,
-                ) = student_stats(
-                    selected_student["id"]
-                )
-
-                c1, c2, c3, c4 = st.columns(4)
-
-                c1.metric(
-                    "📚 الحصص",
-                    total,
-                )
-
-                c2.metric(
-                    "✅ الحضور",
-                    present,
-                )
-
-                c3.metric(
-                    "❌ الغياب",
-                    absent,
-                )
-
-                c4.metric(
-                    "📈 النسبة",
-                    f"{percentage:.1f}%",
-                )
-
-                history = get_student_history(
-                    selected_student["id"]
-                )
-
-                if history:
-
-                    history_table = []
-
-                    for row in history:
-
-                        history_table.append(
-                            {
-                                "الحصة": row["lesson_name"],
-                                "التاريخ": row["created_at"],
-                                "الحالة": (
-                                    "✅ حاضر"
-                                    if row["marked_at"]
-                                    else "❌ غائب"
-                                ),
-                                "وقت الحضور": (
-                                    row["marked_at"]
-                                    or "-"
-                                ),
-                            }
-                        )
-
-                    st.dataframe(
-                        history_table,
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-    finally:
-
-        conn.close()
-
-
-# =========================================================
-# TEACHER DASHBOARD
-# =========================================================
-
-def teacher_dashboard():
-
-    header(
-        "🎓 منصة الحضور",
-        "👨‍🏫 لوحة تحكم المدرس",
-    )
-
-    with st.sidebar:
-
-        st.success(
-            "👨‍🏫 تم تسجيل دخول المدرس"
-        )
-
-        page = st.radio(
-            "📌 القائمة",
-            [
-                "➕ إنشاء حصة",
-                "📊 الحصص الحالية",
-                "📋 التقارير",
-                "📈 الإحصائيات",
-                "👨‍🎓 الطلاب",
-                "📊 التحليلات",
-                "🔐 تغيير كلمة المرور",
-            ],
-        )
-
-        if st.button(
-            "🚪 تسجيل خروج",
-            use_container_width=True,
-            key="teacher_logout",
-        ):
-
-            st.session_state.teacher = False
-
-            st.query_params.clear()
-
-            st.rerun()
-
-    if page == "➕ إنشاء حصة":
-
-        create_lesson()
-
-    elif page == "📊 الحصص الحالية":
-
-        current_lessons()
-
-    elif page == "📋 التقارير":
-
-        reports()
-
-    elif page == "📈 الإحصائيات":
-
-        statistics()
-
-    elif page == "👨‍🎓 الطلاب":
-
-        students()
-
-    elif page == "📊 التحليلات":
-
-        analytics()
-
-    elif page == "🔐 تغيير كلمة المرور":
-
-        change_password()
-
-
-# =========================================================
-# HOME
-# =========================================================
-
-def home():
-
-    header(
-        "🎓 منصة الحضور",
-        "نظام إدارة حضور الطلاب",
-    )
-
-    st.write("")
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-
-        st.subheader(
-            "👨‍🎓 للطلاب"
-        )
-
-        if st.button(
-            "🎓 دخول الطالب",
-            use_container_width=True,
-            key="home_student",
-        ):
-
-            st.query_params["page"] = "student"
-
-            st.rerun()
-
-    with c2:
-
-        st.subheader(
-            "👨‍🏫 للمدرس"
-        )
-
-        if st.button(
-            "👨‍🏫 لوحة المدرس",
-            use_container_width=True,
-            key="home_teacher",
-        ):
-
-            st.query_params["page"] = "teacher"
-
-            st.rerun()
-
-
-# =========================================================
-# MAIN
-# =========================================================
-
-init_db()
-
-page = st.query_params.get(
-    "page",
-    "home",
-)
-
-if page == "student":
-
-    student_page()
-
-elif page == "teacher":
-
-    if st.session_state.get(
-        "teacher",
-        False,
-    ):
-
-        teacher_dashboard()
 
     else:
 
-        teacher_login()
+        student_options = []
 
-else:
+        for row in rows:
 
-    home()
+            student_options.append(
+                f"{row['id']} | "
+                f"{row['name']} | "
+                f"{row['phone']}"
+            )
+
+        selected_student = st.selectbox(
+            "اختر الطالب",
+            student_options,
+            key="edit_student_select",
+        )
+
+        selected_id = int(
+            selected_student.split("|")[0].strip()
+        )
+
+        selected_row = None
+
+        for row in rows:
+
+            if row["id"] == selected_id:
+
+                selected_row = row
+
+                break
+
+        if selected_row:
+
+            with st.form(
+                "edit_student_form"
+            ):
+
+                new_name = st.text_input(
+                    "👨‍🎓 اسم الطالب",
+                    value=selected_row["name"],
+                )
+
+                new_phone = st.text_input(
+                    "📱 رقم الطالب",
+                    value=selected_row["phone"],
+                )
+
+                new_parent_phone = st.text_input(
+                    "👪 رقم ولي الأمر",
+                    value=selected_row["parent_phone"],
+                )
+
+                new_grade = st.selectbox(
+                    "🎓 الصف",
+                    GRADES,
+                    index=(
+                        GRADES.index(
+                            selected_row["grade"]
+                        )
+                        if selected_row["grade"] in GRADES
+                        else 0
+                    ),
+                )
+
+                new_group = st.selectbox(
+                    "👥 المجموعة",
+                    GROUPS,
+                    index=(
+                        GROUPS.index(
+                            selected_row["group_name"]
+                        )
+                        if selected_row["group_name"] in GROUPS
+                        else 0
+                    ),
+                )
+
+                save_edit = st.form_submit_button(
+                    "💾 حفظ التعديلات",
+                    use_container_width=True,
+                )
+
+            if save_edit:
+
+                new_name = new_name.strip()
+
+                new_phone = clean_phone(
+                    new_phone
+                )
+
+                new_parent_phone = clean_phone(
+                    new_parent_phone
+                )
+
+                if not new_name:
+
+                    st.error(
+                        "❌ اسم الطالب مطلوب."
+                    )
+
+                elif len(new_phone) < 8:
+
+                    st.error(
+                        "❌ رقم الهاتف غير صحيح."
+                    )
+
+                else:
+
+                    conn = db()
+
+                    try:
+
+                        duplicate = conn.execute(
+                            """
+                            SELECT id
+                            FROM students
+                            WHERE phone = ?
+                            AND id != ?
+                            """,
+                            (
+                                new_phone,
+                                selected_id,
+                            ),
+                        ).fetchone()
+
+                        if duplicate:
+
+                            st.error(
+                                "❌ رقم الهاتف مستخدم مع طالب آخر."
+                            )
+
+                        else:
+
+                            old_grade = selected_row[
+                                "grade"
+                            ]
+
+                            old_group = selected_row[
+                                "group_name"
+                            ]
+
+                            changing_group = (
+                                new_grade != old_grade
+                                or
+                                new_group != old_group
+                            )
+
+                            capacity_ok = True
+
+                            if changing_group:
+
+                                count = conn.execute(
+                                    """
+                                    SELECT COUNT(*)
+                                    FROM students
+                                    WHERE grade = ?
+                                    AND group_name = ?
+                                    AND id != ?
+                                    """,
+                                    (
+                                        new_grade,
+                                        new_group,
+                                        selected_id,
+                                    ),
+                                ).fetchone()[0]
+
+                                if count >= GROUP_LIMIT:
+
+                                    capacity_ok = False
+
+                                    st.error(
+                                        "❌ المجموعة الجديدة مكتملة."
+                                    )
+
+                            if capacity_ok:
+
+                                conn.execute(
+                                    """
+                                    UPDATE students
+                                    SET
+                                        name = ?,
+                                        phone = ?,
+                                        parent_phone = ?,
+                                        grade = ?,
+                                        group_name = ?
+                                    WHERE id = ?
+                                    """,
+                                    (
+                                        new_name,
+                                        new_phone,
+                                        new_parent_phone,
+                                        new_grade,
+                                        new_group,
+                                        selected_id,
+                                    ),
+                                )
+
+                                conn.commit()
+
+                                st.success(
+                                    "✅ تم تعديل بيانات الطالب بنجاح."
+                                )
+
+                                st.rerun()
+
+                    except sqlite3.IntegrityError:
+
+                        conn.rollback()
+
+                        st.error(
+                            "❌ رقم الهاتف مستخدم بالفعل."
+                        )
+
+                    except Exception as exc:
+
+                        conn.rollback()
+
+                        st.error(
+                            f"❌ حدث خطأ: {exc}"
+                        )
+
+                    finally:
+
+                        conn.close()
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # DELETE STUDENT
+    # -----------------------------------------------------
+
+    st.markdown(
+        "### 🗑️ حذف طالب"
+    )
+
+    if not rows:
+
+        st.info(
+            "📭 لا يوجد طلاب للحذف."
+        )
+
+    else:
+
+        delete_options = []
+
+        for row in rows:
+
+            delete_options.append(
+                f"{row['id']} | "
+                f"{row['name']} | "
+                f"{row['phone']}"
+            )
+
+        delete_student = st.selectbox(
+            "اختر الطالب المراد حذفه",
+            delete_options,
+            key="delete_student_select",
+        )
+
+        delete_id = int(
+            delete_student.split("|")[0].strip()
+        )
+
+        delete_row = None
+
+        for row in rows:
+
+            if row["id"] == delete_id:
+
+                delete_row = row
+
+                break
+
+        if delete_row:
+
+            st.warning(
+                f"""
+⚠️ الطالب المحدد:
+
+👨‍🎓 {delete_row['name']}
+
+📱 {delete_row['phone']}
+
+🎓 {delete_row['grade']}
+
+👥 {delete_row['group_name']}
+
+سيتم حذف بيانات الطالب وسجل حضوره.
+                """
+            )
+
+            confirm_delete = st.checkbox(
+                "⚠️ أؤكد أنني أريد حذف الطالب نهائيًا",
+                key="confirm_delete_student",
+            )
+
+            if st.button(
+                "🗑️ حذف الطالب نهائيًا",
+                use_container_width=True,
+                key="delete_student_button",
+            ):
+
+                if not confirm_delete:
+
+                    st.error(
+                        "❌ أكد الحذف أولًا."
+                    )
+
+                else:
+
+                    conn = db()
+
+                    try:
+
+                        conn.execute(
+                            """
+                            DELETE FROM attendance
+                            WHERE student_id = ?
+                            """,
+                            (delete_id,),
+                        )
+
+                        conn.execute(
+                            """
+                            DELETE FROM lesson_students
+                            WHERE student_id = ?
+                            """,
+                            (delete_id,),
+                        )
+
+                        conn.execute(
+                            """
+                            DELETE FROM students
+                            WHERE id = ?
+                            """,
+                            (delete_id,),
+                        )
+
+                        con
