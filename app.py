@@ -21,10 +21,10 @@ st.set_page_config(
 
 
 # =========================================================
-# قاعدة البيانات - إصدار جديد
+# قاعدة البيانات
 # =========================================================
 
-DB_NAME = "teacher_system_v2.db"
+DB_NAME = "teacher_system_v3.db"
 
 
 def get_db():
@@ -39,9 +39,9 @@ def get_db():
 def init_db():
 
     conn = get_db()
-    cursor = conn.cursor()
+    cur = conn.cursor()
 
-    cursor.execute("""
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS students (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             student_code TEXT UNIQUE NOT NULL,
@@ -51,7 +51,7 @@ def init_db():
         )
     """)
 
-    cursor.execute("""
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS lessons (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
@@ -62,15 +62,20 @@ def init_db():
         )
     """)
 
-    cursor.execute("""
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             student_id INTEGER NOT NULL,
             lesson_id INTEGER NOT NULL,
             attended_at TEXT NOT NULL,
+
             UNIQUE(student_id, lesson_id),
-            FOREIGN KEY(student_id) REFERENCES students(id),
-            FOREIGN KEY(lesson_id) REFERENCES lessons(id)
+
+            FOREIGN KEY(student_id)
+            REFERENCES students(id),
+
+            FOREIGN KEY(lesson_id)
+            REFERENCES lessons(id)
         )
     """)
 
@@ -103,8 +108,8 @@ def add_student(code, name, phone):
                 phone,
                 datetime.now().strftime(
                     "%Y-%m-%d %H:%M:%S"
-                ),
-            ),
+                )
+            )
         )
 
         conn.commit()
@@ -146,7 +151,7 @@ def delete_student(student_id):
         DELETE FROM students
         WHERE id = ?
         """,
-        (student_id,),
+        (student_id,)
     )
 
     conn.commit()
@@ -170,10 +175,10 @@ def create_lesson(title):
         """
     )
 
-    # QR Token جديد لكل حصة
+    # QR جديد للحصة
     token = secrets.token_urlsafe(32)
 
-    cursor = conn.execute(
+    cur = conn.execute(
         """
         INSERT INTO lessons
         (title, token, active, created_at)
@@ -184,11 +189,11 @@ def create_lesson(title):
             token,
             datetime.now().strftime(
                 "%Y-%m-%d %H:%M:%S"
-            ),
-        ),
+            )
+        )
     )
 
-    lesson_id = cursor.lastrowid
+    lesson_id = cur.lastrowid
 
     conn.commit()
     conn.close()
@@ -230,7 +235,29 @@ def end_lesson():
             datetime.now().strftime(
                 "%Y-%m-%d %H:%M:%S"
             ),
-        ),
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def change_lesson_qr(lesson_id):
+
+    conn = get_db()
+
+    new_token = secrets.token_urlsafe(32)
+
+    conn.execute(
+        """
+        UPDATE lessons
+        SET token = ?
+        WHERE id = ?
+        """,
+        (
+            new_token,
+            lesson_id
+        )
     )
 
     conn.commit()
@@ -258,8 +285,8 @@ def mark_attendance(student_id, lesson_id):
                 lesson_id,
                 datetime.now().strftime(
                     "%Y-%m-%d %H:%M:%S"
-                ),
-            ),
+                )
+            )
         )
 
         conn.commit()
@@ -306,7 +333,7 @@ def get_attendance(lesson_id=None):
 
             ORDER BY attendance.id DESC
             """,
-            (lesson_id,),
+            (lesson_id,)
         ).fetchall()
 
     else:
@@ -339,7 +366,7 @@ def get_attendance(lesson_id=None):
 
 
 # =========================================================
-# إنشاء QR
+# QR
 # =========================================================
 
 def generate_qr(data):
@@ -347,23 +374,33 @@ def generate_qr(data):
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=12,
-        border=4,
+        box_size=10,
+        border=4
     )
 
     qr.add_data(data)
     qr.make(fit=True)
 
-    image = qr.make_image(
+    return qr.make_image(
         fill_color="black",
-        back_color="white",
+        back_color="white"
     )
 
-    return image
+
+def qr_to_bytes(image):
+
+    buffer = io.BytesIO()
+
+    image.save(
+        buffer,
+        format="PNG"
+    )
+
+    return buffer.getvalue()
 
 
 # =========================================================
-# قراءة QR بالكاميرا
+# قراءة QR من الكاميرا
 # =========================================================
 
 def scan_qr(uploaded_image):
@@ -400,7 +437,60 @@ def scan_qr(uploaded_image):
 
 
 # =========================================================
-# التصميم
+# التحقق من QR الحصة
+# =========================================================
+
+def is_valid_lesson_qr(qr_data, lesson):
+
+    prefix = "YOSEF_TEACHER_SYSTEM|LESSON|"
+
+    if not qr_data.startswith(prefix):
+        return False
+
+    token = qr_data[len(prefix):]
+
+    return token == lesson["token"]
+
+
+# =========================================================
+# QR الطالب الخاص بالحصة
+# =========================================================
+
+def make_student_lesson_qr(student, lesson):
+
+    data = (
+        "YOSEF_TEACHER_SYSTEM|STUDENT|"
+        f"{student['id']}|"
+        f"{student['student_code']}|"
+        f"{lesson['token']}"
+    )
+
+    return generate_qr(data)
+
+
+def parse_student_qr(qr_data):
+
+    prefix = "YOSEF_TEACHER_SYSTEM|STUDENT|"
+
+    if not qr_data.startswith(prefix):
+
+        return None
+
+    parts = qr_data.split("|")
+
+    if len(parts) != 5:
+
+        return None
+
+    return {
+        "student_id": parts[2],
+        "student_code": parts[3],
+        "lesson_token": parts[4]
+    }
+
+
+# =========================================================
+# العنوان
 # =========================================================
 
 st.markdown(
@@ -411,25 +501,19 @@ st.markdown(
         font-size: 42px;
         font-weight: 800;
         text-align: center;
-        margin-bottom: 5px;
     }
 
     .subtitle {
         text-align: center;
         color: #888;
-        font-size: 17px;
+        font-size: 18px;
         margin-bottom: 30px;
     }
 
     </style>
     """,
-    unsafe_allow_html=True,
+    unsafe_allow_html=True
 )
-
-
-# =========================================================
-# العنوان
-# =========================================================
 
 st.markdown(
     '<div class="main-title">🎓 Teacher System</div>',
@@ -445,16 +529,16 @@ st.markdown(
 
 
 # =========================================================
-# نوع الدخول
+# اختيار نوع الدخول
 # =========================================================
 
 mode = st.radio(
     "اختار نوع الدخول",
     [
         "👨‍🏫 لوحة المدرس",
-        "👨‍🎓 تسجيل حضور الطالب",
+        "👨‍🎓 تسجيل حضور الطالب"
     ],
-    horizontal=True,
+    horizontal=True
 )
 
 
@@ -501,13 +585,14 @@ if mode == "👨‍🏫 لوحة المدرس":
 
     st.divider()
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # إضافة طالب
-    # -----------------------------------------------------
+    # =====================================================
 
     st.subheader("➕ إضافة طالب")
 
-    with st.form("add_student_form"):
+    with st.form("add_student"):
 
         col1, col2, col3 = st.columns(3)
 
@@ -522,7 +607,7 @@ if mode == "👨‍🏫 لوحة المدرس":
 
             student_name = st.text_input(
                 "اسم الطالب",
-                placeholder="اسم الطالب بالكامل"
+                placeholder="محمد أحمد"
             )
 
         with col3:
@@ -532,12 +617,12 @@ if mode == "👨‍🏫 لوحة المدرس":
                 placeholder="اختياري"
             )
 
-        submitted = st.form_submit_button(
+        submit = st.form_submit_button(
             "➕ إضافة الطالب",
             use_container_width=True
         )
 
-        if submitted:
+        if submit:
 
             if not student_code.strip():
 
@@ -562,17 +647,20 @@ if mode == "👨‍🏫 لوحة المدرس":
                 if ok:
 
                     st.success(message)
+
                     st.rerun()
 
                 else:
 
                     st.error(message)
 
+
     st.divider()
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # قائمة الطلاب
-    # -----------------------------------------------------
+    # =====================================================
 
     st.subheader("👨‍🎓 قائمة الطلاب")
 
@@ -601,8 +689,7 @@ if mode == "👨‍🏫 لوحة المدرس":
             with col3:
 
                 st.write(
-                    student["phone"]
-                    or "-"
+                    student["phone"] or "-"
                 )
 
             with col4:
@@ -624,11 +711,13 @@ if mode == "👨‍🏫 لوحة المدرس":
             "لا يوجد طلاب حتى الآن."
         )
 
+
     st.divider()
 
-    # -----------------------------------------------------
+
+    # =====================================================
     # إدارة الحصة
-    # -----------------------------------------------------
+    # =====================================================
 
     st.subheader("📚 إدارة الحصة")
 
@@ -636,7 +725,7 @@ if mode == "👨‍🏫 لوحة المدرس":
 
         lesson_title = st.text_input(
             "اسم الحصة",
-            placeholder="مثال: رياضيات - الصف الثالث"
+            placeholder="رياضيات - الصف الثالث"
         )
 
         if st.button(
@@ -678,80 +767,108 @@ if mode == "👨‍🏫 لوحة المدرس":
             "🔳 QR الخاص بالحصة"
         )
 
-        qr_data = (
-            "YOSEF_TEACHER_SYSTEM|"
+        lesson_qr_data = (
+            "YOSEF_TEACHER_SYSTEM|LESSON|"
             + active_lesson["token"]
         )
 
-        qr_image = generate_qr(
-            qr_data
-        )
-
-        image_buffer = io.BytesIO()
-
-        qr_image.save(
-            image_buffer,
-            format="PNG"
+        lesson_qr = generate_qr(
+            lesson_qr_data
         )
 
         st.image(
-            image_buffer.getvalue(),
+            qr_to_bytes(lesson_qr),
             width=350
         )
 
         st.info(
-            "📱 خلي الطلاب يمسحوا الـQR "
-            "لتسجيل حضورهم."
+            "📱 الطالب يمسح QR الحصة "
+            "لتسجيل حضوره."
         )
 
-        if st.button(
-            "🔄 توليد QR جديد لنفس الحصة",
-            use_container_width=True
-        ):
+        col1, col2 = st.columns(2)
 
-            conn = get_db()
+        with col1:
 
-            new_token = secrets.token_urlsafe(32)
+            if st.button(
+                "🔄 تغيير QR الحصة",
+                use_container_width=True
+            ):
 
-            conn.execute(
-                """
-                UPDATE lessons
-                SET token = ?
-                WHERE id = ?
-                """,
-                (
-                    new_token,
+                change_lesson_qr(
                     active_lesson["id"]
                 )
-            )
 
-            conn.commit()
-            conn.close()
+                st.success(
+                    "تم تغيير QR الحصة بنجاح 🔄"
+                )
 
-            st.success(
-                "تم تغيير QR بنجاح 🔄"
-            )
+                st.rerun()
 
-            st.rerun()
+        with col2:
 
-        if st.button(
-            "🔴 إنهاء الحصة",
-            use_container_width=True
-        ):
+            if st.button(
+                "🔴 إنهاء الحصة",
+                use_container_width=True
+            ):
 
-            end_lesson()
+                end_lesson()
 
-            st.success(
-                "تم إنهاء الحصة 🔴"
-            )
+                st.success(
+                    "تم إنهاء الحصة."
+                )
 
-            st.rerun()
+                st.rerun()
+
 
     st.divider()
 
-    # -----------------------------------------------------
+
+    # =====================================================
+    # QR الطلاب
+    # =====================================================
+
+    active_lesson = get_active_lesson()
+
+    if active_lesson and students:
+
+        st.subheader(
+            "🎓 QR الطلاب للحصة الحالية"
+        )
+
+        st.info(
+            "كل طالب له QR مختلف، "
+            "والـQR يتغير تلقائيًا عند تغيير الحصة."
+        )
+
+        for student in students:
+
+            with st.expander(
+                f"🎓 {student['name']} "
+                f"— {student['student_code']}"
+            ):
+
+                student_qr = make_student_lesson_qr(
+                    student,
+                    active_lesson
+                )
+
+                st.image(
+                    qr_to_bytes(student_qr),
+                    width=250
+                )
+
+                st.caption(
+                    "هذا QR صالح للحصة الحالية فقط."
+                )
+
+
+    st.divider()
+
+
+    # =====================================================
     # سجل الحضور
-    # -----------------------------------------------------
+    # =====================================================
 
     st.subheader("📊 سجل الحضور")
 
@@ -785,6 +902,10 @@ else:
 
     active_lesson = get_active_lesson()
 
+    # -----------------------------------------------------
+    # لا توجد حصة
+    # -----------------------------------------------------
+
     if not active_lesson:
 
         st.error(
@@ -807,10 +928,18 @@ else:
         if not students:
 
             st.warning(
-                "لا يوجد طلاب مسجلون."
+                "⚠️ لا يوجد طلاب مسجلون."
             )
 
         else:
+
+            # -------------------------------------------------
+            # اختيار الطالب
+            # -------------------------------------------------
+
+            st.subheader(
+                "👤 اختار اسم الطالب"
+            )
 
             student_options = {}
 
@@ -824,7 +953,7 @@ else:
                 student_options[label] = student["id"]
 
             selected_student = st.selectbox(
-                "اختار اسمك",
+                "اسم الطالب",
                 list(student_options.keys())
             )
 
@@ -832,14 +961,29 @@ else:
                 selected_student
             ]
 
+            selected_student_data = next(
+                s for s in students
+                if s["id"] == student_id
+            )
+
             st.divider()
 
+
+            # -------------------------------------------------
+            # QR الحصة
+            # -------------------------------------------------
+
             st.subheader(
-                "📷 مسح QR"
+                "📷 مسح QR الحصة"
+            )
+
+            st.info(
+                "وجّه كاميرا الموبايل إلى QR "
+                "الموجود عند المدرس."
             )
 
             camera_image = st.camera_input(
-                "وجه الكاميرا ناحية QR الحصة"
+                "📷 افتح الكاميرا"
             )
 
             if camera_image:
@@ -851,86 +995,145 @@ else:
                 if not qr_result:
 
                     st.error(
-                        "❌ لم يتم العثور على QR. "
-                        "حاول تصوير الكود بوضوح."
+                        "❌ لم يتم اكتشاف QR."
                     )
 
                 else:
 
-                    prefix = (
-                        "YOSEF_TEACHER_SYSTEM|"
-                    )
+                    # -----------------------------------------
+                    # QR الحصة
+                    # -----------------------------------------
 
-                    if not qr_result.startswith(
-                        prefix
+                    if is_valid_lesson_qr(
+                        qr_result,
+                        active_lesson
                     ):
 
-                        st.error(
-                            "❌ QR غير صالح."
+                        ok, message = mark_attendance(
+                            student_id,
+                            active_lesson["id"]
                         )
 
-                    else:
+                        if ok:
 
-                        token = qr_result[
-                            len(prefix):
-                        ]
-
-                        if (
-                            token
-                            != active_lesson["token"]
-                        ):
-
-                            st.error(
-                                "❌ هذا QR قديم "
-                                "أو تابع لحصة أخرى."
+                            st.success(
+                                "🎉 تم تسجيل حضورك بنجاح!"
                             )
+
+                            st.balloons()
 
                         else:
 
-                            ok, message = (
-                                mark_attendance(
-                                    student_id,
-                                    active_lesson["id"]
-                                )
+                            st.warning(
+                                message
                             )
 
-                            if ok:
+                    else:
 
-                                st.success(
-                                    message
+                        # -------------------------------------
+                        # QR الطالب
+                        # -------------------------------------
+
+                        student_qr_data = parse_student_qr(
+                            qr_result
+                        )
+
+                        if student_qr_data:
+
+                            if (
+                                student_qr_data[
+                                    "lesson_token"
+                                ]
+                                != active_lesson["token"]
+                            ):
+
+                                st.error(
+                                    "❌ QR الطالب قديم "
+                                    "أو تابع لحصة أخرى."
                                 )
 
-                                st.balloons()
+                            elif (
+                                int(
+                                    student_qr_data[
+                                        "student_id"
+                                    ]
+                                )
+                                != student_id
+                            ):
+
+                                st.error(
+                                    "❌ QR لا يخص الطالب "
+                                    "المختار."
+                                )
 
                             else:
 
-                                st.warning(
-                                    message
+                                ok, message = (
+                                    mark_attendance(
+                                        student_id,
+                                        active_lesson["id"]
+                                    )
                                 )
+
+                                if ok:
+
+                                    st.success(
+                                        "🎉 تم تسجيل حضورك بنجاح!"
+                                    )
+
+                                    st.balloons()
+
+                                else:
+
+                                    st.warning(
+                                        message
+                                    )
+
+                        else:
+
+                            st.error(
+                                "❌ QR غير صالح "
+                                "أو لا ينتمي للنظام."
+                            )
+
 
             st.divider()
 
+
+            # -------------------------------------------------
+            # QR الطالب
+            # -------------------------------------------------
+
             st.subheader(
-                "📝 تسجيل يدوي"
+                "🎓 QR الطالب"
             )
 
-            if st.button(
-                "✅ تسجيل حضوري",
-                use_container_width=True
-            ):
+            st.info(
+                "يمكن للطالب عرض QR الخاص به "
+                "للحصة الحالية."
+            )
 
-                ok, message = mark_attendance(
-                    student_id,
-                    active_lesson["id"]
-                )
+            own_qr = make_student_lesson_qr(
+                selected_student_data,
+                active_lesson
+            )
 
-                if ok:
+            st.image(
+                qr_to_bytes(own_qr),
+                width=300
+            )
 
-                    st.success(message)
+            st.caption(
+                "⚠️ هذا QR يتغير عند تغيير الحصة."
+            )
 
-                else:
 
-                    st.warning(message)
+            st.divider()
+
+            st.caption(
+                "🔒 لا يمكن تسجيل الحضور أكثر من مرة "
+                "في نفس الحصة."
+            )
 
 
 # =========================================================
@@ -941,4 +1144,4 @@ st.divider()
 
 st.caption(
     "🎓 Teacher System — Developed by Yosef"
-)
+    )
