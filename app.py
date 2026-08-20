@@ -2580,6 +2580,12 @@ def analytics():
                     "✅ الحضور",
                     present,
                 )
-
                 c3.metric(
-                    "❌ 
+                    "❌ الغياب",
+                    absent,
+                )
+
+                c4.metric(
+                    "📈 النسبة",
+                    f"{percentage:.1f}%",
+                )
