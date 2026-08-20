@@ -37,7 +37,7 @@ DEFAULT_TEACHER_PASSWORD = "1234"
 
 
 # =========================================================
-# PAGE
+# PAGE CONFIG
 # =========================================================
 
 st.set_page_config(
@@ -105,7 +105,6 @@ def db():
 
 
 def init_db():
-
     conn = db()
 
     try:
@@ -180,7 +179,6 @@ def init_db():
         ).fetchone()
 
         if row is None:
-
             conn.execute(
                 """
                 INSERT INTO settings
@@ -196,23 +194,20 @@ def init_db():
         conn.commit()
 
     finally:
-
         conn.close()
 
 
 # =========================================================
-# BASIC
+# BASIC HELPERS
 # =========================================================
 
 def now():
-
     return datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
     )
 
 
 def clean_phone(phone):
-
     return re.sub(
         r"\D",
         "",
@@ -221,7 +216,6 @@ def clean_phone(phone):
 
 
 def header(title, subtitle):
-
     st.markdown(
         f"""
         <div class="main-title">
@@ -241,11 +235,9 @@ def header(title, subtitle):
 # =========================================================
 
 def get_teacher_password():
-
     conn = db()
 
     try:
-
         row = conn.execute(
             """
             SELECT value
@@ -260,16 +252,13 @@ def get_teacher_password():
         return DEFAULT_TEACHER_PASSWORD
 
     finally:
-
         conn.close()
 
 
 def set_teacher_password(password):
-
     conn = db()
 
     try:
-
         conn.execute(
             """
             INSERT INTO settings
@@ -286,22 +275,18 @@ def set_teacher_password(password):
         )
 
         conn.commit()
-
         return True
 
     except Exception:
-
         conn.rollback()
-
         return False
 
     finally:
-
         conn.close()
 
 
 # =========================================================
-# STUDENT
+# STUDENT HELPERS
 # =========================================================
 
 def get_student(student_id):
@@ -312,7 +297,6 @@ def get_student(student_id):
     conn = db()
 
     try:
-
         return conn.execute(
             """
             SELECT *
@@ -323,7 +307,6 @@ def get_student(student_id):
         ).fetchone()
 
     finally:
-
         conn.close()
 
 
@@ -337,7 +320,6 @@ def get_student_by_phone(phone):
     conn = db()
 
     try:
-
         return conn.execute(
             """
             SELECT *
@@ -348,7 +330,6 @@ def get_student_by_phone(phone):
         ).fetchone()
 
     finally:
-
         conn.close()
 
 
@@ -359,43 +340,36 @@ def get_student_id():
     )
 
     if sid is None:
-
         sid = st.query_params.get(
             "student"
         )
 
     try:
-
         sid = int(sid)
 
     except (
         TypeError,
         ValueError,
     ):
-
         return None
 
     if get_student(sid):
-
         st.session_state.student_id = sid
-
         return sid
 
     return None
 
 
 # =========================================================
-# URL
+# URL HELPERS
 # =========================================================
 
 def get_base_url():
 
     try:
-
         current = st.context.url
 
         if current:
-
             parsed = urlparse(current)
 
             return (
@@ -405,7 +379,6 @@ def get_base_url():
             )
 
     except Exception:
-
         pass
 
     return ""
@@ -416,7 +389,6 @@ def student_url():
     base = get_base_url()
 
     if base:
-
         return f"{base}?page=student"
 
     return "?page=student"
@@ -427,7 +399,6 @@ def lesson_url(token):
     base = get_base_url()
 
     if base:
-
         return (
             f"{base}"
             f"?page=student"
@@ -441,7 +412,7 @@ def lesson_url(token):
 
 
 # =========================================================
-# GROUPS
+# GROUP HELPERS
 # =========================================================
 
 def group_count(grade, group):
@@ -449,7 +420,6 @@ def group_count(grade, group):
     conn = db()
 
     try:
-
         return conn.execute(
             """
             SELECT COUNT(*)
@@ -464,12 +434,11 @@ def group_count(grade, group):
         ).fetchone()[0]
 
     finally:
-
         conn.close()
 
 
 # =========================================================
-# LESSONS
+# LESSON HELPERS
 # =========================================================
 
 def get_lesson_by_token(token):
@@ -480,7 +449,6 @@ def get_lesson_by_token(token):
     conn = db()
 
     try:
-
         return conn.execute(
             """
             SELECT *
@@ -493,7 +461,6 @@ def get_lesson_by_token(token):
         ).fetchone()
 
     finally:
-
         conn.close()
 
 
@@ -502,7 +469,6 @@ def get_active_lessons():
     conn = db()
 
     try:
-
         return conn.execute(
             """
             SELECT *
@@ -513,7 +479,6 @@ def get_active_lessons():
         ).fetchall()
 
     finally:
-
         conn.close()
 
 
@@ -540,13 +505,11 @@ def extract_token(value):
         ).get("lesson")
 
         if result:
-
             return unquote(
                 result[0]
             ).strip()
 
     except Exception:
-
         pass
 
     match = re.search(
@@ -555,7 +518,6 @@ def extract_token(value):
     )
 
     if match:
-
         return unquote(
             match.group(1)
         ).strip()
@@ -564,7 +526,7 @@ def extract_token(value):
 
 
 # =========================================================
-# QR
+# QR DECODER
 # =========================================================
 
 def decode_qr(image_bytes):
@@ -615,15 +577,12 @@ def decode_qr(image_bytes):
                 )
 
                 if value:
-
                     return value.strip()
 
             except Exception:
-
                 pass
 
     except Exception:
-
         pass
 
     return None
@@ -633,14 +592,16 @@ def decode_qr(image_bytes):
 # ATTENDANCE
 # =========================================================
 
-def mark_attendance(token, student_id):
+def mark_attendance(
+    token,
+    student_id,
+):
 
     token = extract_token(token)
 
     lesson = get_lesson_by_token(token)
 
     if not lesson:
-
         return (
             False,
             "❌ الحصة غير موجودة أو انتهت.",
@@ -649,7 +610,6 @@ def mark_attendance(token, student_id):
     student = get_student(student_id)
 
     if not student:
-
         return (
             False,
             "❌ الطالب غير موجود.",
@@ -758,7 +718,6 @@ def mark_attendance(token, student_id):
         )
 
     finally:
-
         conn.close()
 
 
@@ -774,7 +733,7 @@ def student_register():
     )
 
     st.info(
-        "👋 سجل بياناتك مرة واحدة فقط."
+        "👋 سجل بياناتك مرة واحدة فقط، وبعدها يمكنك الدخول في أي وقت."
     )
 
     with st.form(
@@ -804,9 +763,9 @@ def student_register():
         )
 
         st.info(
-            f"{group}: "
+            f"👥 {group}: "
             f"{group_count(grade, group)}"
-            f"/{GROUP_LIMIT}"
+            f"/{GROUP_LIMIT} طالب"
         )
 
         submit = st.form_submit_button(
@@ -822,15 +781,15 @@ def student_register():
     parent_phone = clean_phone(parent_phone)
 
     if not name:
-
-        st.error("❌ اكتب اسم الطالب.")
-
+        st.error(
+            "❌ اكتب اسم الطالب."
+        )
         return
 
     if len(phone) < 8:
-
-        st.error("❌ رقم الهاتف غير صحيح.")
-
+        st.error(
+            "❌ رقم الهاتف غير صحيح."
+        )
         return
 
     conn = db()
@@ -848,16 +807,23 @@ def student_register():
 
         if old:
 
-            st.session_state.student_id = old["id"]
-
-            st.query_params["page"] = "student"
-
-            st.query_params["student"] = str(
+            st.session_state.student_id = (
                 old["id"]
             )
 
-            st.rerun()
+            st.query_params["page"] = (
+                "student"
+            )
 
+            st.query_params["student"] = (
+                str(old["id"])
+            )
+
+            st.success(
+                "✅ الحساب موجود بالفعل."
+            )
+
+            st.rerun()
             return
 
         count = conn.execute(
@@ -910,9 +876,17 @@ def student_register():
 
         st.session_state.student_id = sid
 
-        st.query_params["page"] = "student"
+        st.query_params["page"] = (
+            "student"
+        )
 
-        st.query_params["student"] = str(sid)
+        st.query_params["student"] = (
+            str(sid)
+        )
+
+        st.success(
+            "🎉 تم تسجيل الطالب بنجاح."
+        )
 
         st.rerun()
 
@@ -933,7 +907,6 @@ def student_register():
         )
 
     finally:
-
         conn.close()
 
 
@@ -946,6 +919,10 @@ def student_login():
     header(
         "🎓 منصة الحضور",
         "🔐 دخول الطالب",
+    )
+
+    st.info(
+        "👨‍🎓 اكتب رقم هاتفك للدخول."
     )
 
     with st.form(
@@ -974,7 +951,9 @@ def student_login():
 
         return
 
-    student = get_student_by_phone(phone)
+    student = get_student_by_phone(
+        phone
+    )
 
     if not student:
 
@@ -984,12 +963,20 @@ def student_login():
 
         return
 
-    st.session_state.student_id = student["id"]
-
-    st.query_params["page"] = "student"
-
-    st.query_params["student"] = str(
+    st.session_state.student_id = (
         student["id"]
+    )
+
+    st.query_params["page"] = (
+        "student"
+    )
+
+    st.query_params["student"] = (
+        str(student["id"])
+    )
+
+    st.success(
+        "✅ تم تسجيل الدخول."
     )
 
     st.rerun()
@@ -1009,8 +996,10 @@ def student_stats(student_id):
             """
             SELECT COUNT(*)
             FROM lesson_students ls
+
             JOIN lessons l
             ON l.id = ls.lesson_id
+
             WHERE ls.student_id = ?
             AND l.active = 0
             """,
@@ -1021,8 +1010,10 @@ def student_stats(student_id):
             """
             SELECT COUNT(*)
             FROM attendance a
+
             JOIN lessons l
             ON l.id = a.lesson_id
+
             WHERE a.student_id = ?
             AND l.active = 0
             """,
@@ -1045,7 +1036,6 @@ def student_stats(student_id):
         )
 
     finally:
-
         conn.close()
 
 
@@ -1062,6 +1052,7 @@ def get_student_history(student_id):
                 l.grade,
                 l.group_name,
                 l.created_at,
+                l.ended_at,
                 a.marked_at
 
             FROM lesson_students ls
@@ -1082,7 +1073,6 @@ def get_student_history(student_id):
         ).fetchall()
 
     finally:
-
         conn.close()
 
 
@@ -1092,18 +1082,22 @@ def get_student_history(student_id):
 
 def student_profile(student):
 
-    st.subheader("👤 بيانات الطالب")
+    st.subheader(
+        "👤 بيانات الطالب"
+    )
 
     c1, c2 = st.columns(2)
 
     with c1:
 
         st.write(
-            f"**👨‍🎓 الاسم:** {student['name']}"
+            f"**👨‍🎓 الاسم:** "
+            f"{student['name']}"
         )
 
         st.write(
-            f"**🎓 الصف:** {student['grade']}"
+            f"**🎓 الصف:** "
+            f"{student['grade']}"
         )
 
     with c2:
@@ -1114,7 +1108,13 @@ def student_profile(student):
         )
 
         st.write(
-            f"**📱 الهاتف:** {student['phone']}"
+            f"**📱 الهاتف:** "
+            f"{student['phone']}"
+        )
+
+        st.write(
+            f"**👪 ولي الأمر:** "
+            f"{student['parent_phone'] or '-'}"
         )
 
     st.divider()
@@ -1124,13 +1124,31 @@ def student_profile(student):
         present,
         absent,
         percentage,
-    ) = student_stats(student["id"])
+    ) = student_stats(
+        student["id"]
+    )
+
+    st.subheader(
+        "📊 إحصائيات الحضور"
+    )
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.metric("📚 الحصص", total)
-    c2.metric("✅ الحضور", present)
-    c3.metric("❌ الغياب", absent)
+    c1.metric(
+        "📚 الحصص",
+        total,
+    )
+
+    c2.metric(
+        "✅ الحضور",
+        present,
+    )
+
+    c3.metric(
+        "❌ الغياب",
+        absent,
+    )
+
     c4.metric(
         "📈 النسبة",
         f"{percentage:.1f}%",
@@ -1138,7 +1156,7 @@ def student_profile(student):
 
 
 # =========================================================
-# STUDENT HISTORY
+# STUDENT HISTORY PAGE
 # =========================================================
 
 def student_history(student):
@@ -1154,7 +1172,7 @@ def student_history(student):
     if not rows:
 
         st.info(
-            "📭 لا توجد حصص منتهية."
+            "📭 لا توجد حصص منتهية حتى الآن."
         )
 
         return
@@ -1165,19 +1183,28 @@ def student_history(student):
 
         table.append(
             {
-                "الحصة": row["lesson_name"],
-                "الصف": row["grade"],
-                "المجموعة": row["group_name"],
-                "التاريخ": row["created_at"],
-                "الحالة": (
-                    "✅ حاضر"
-                    if row["marked_at"]
-                    else "❌ غائب"
-                ),
-                "وقت الحضور": (
+                "الحصة":
+                    row["lesson_name"],
+
+                "الصف":
+                    row["grade"],
+
+                "المجموعة":
+                    row["group_name"],
+
+                "تاريخ الحصة":
+                    row["created_at"],
+
+                "الحالة":
+                    (
+                        "✅ حاضر"
+                        if row["marked_at"]
+                        else "❌ غائب"
+                    ),
+
+                "وقت الحضور":
                     row["marked_at"]
-                    or "-"
-                ),
+                    or "-",
             }
         )
 
@@ -1199,7 +1226,7 @@ def student_attendance(student):
     )
 
     st.info(
-        "📱 امسح QR الموجود عند المدرس."
+        "📱 وجّه الكاميرا إلى QR الموجود عند المدرس."
     )
 
     photo = st.camera_input(
@@ -1216,7 +1243,8 @@ def student_attendance(student):
         if not raw:
 
             st.error(
-                "❌ لم يتم قراءة QR."
+                "❌ لم يتم قراءة QR. "
+                "حاول تقريب الكاميرا وتحسين الإضاءة."
             )
 
         else:
@@ -1241,18 +1269,18 @@ def student_attendance(student):
     st.divider()
 
     st.subheader(
-        "🔗 الحضور بالرابط"
+        "🔗 تسجيل الحضور بالرابط"
     )
 
     manual = st.text_input(
-        "الصق رابط الحصة",
-        key="manual_link",
+        "🔗 الصق رابط الحصة هنا",
+        key="manual_lesson_link",
     )
 
     if st.button(
-        "✅ تسجيل الحضور",
+        "✅ تسجيل الحضور بالرابط",
         use_container_width=True,
-        key="manual_attendance",
+        key="manual_attendance_button",
     ):
 
         token = extract_token(manual)
@@ -1286,17 +1314,17 @@ def student_page():
 
     if sid is None:
 
-        login, register = st.tabs(
+        login_tab, register_tab = st.tabs(
             [
-                "🔐 دخول",
-                "📝 تسجيل",
+                "🔐 دخول الطالب",
+                "📝 تسجيل لأول مرة",
             ]
         )
 
-        with login:
+        with login_tab:
             student_login()
 
-        with register:
+        with register_tab:
             student_register()
 
         return
@@ -1331,27 +1359,27 @@ def student_page():
         """
     )
 
-    t1, t2, t3 = st.tabs(
+    tab1, tab2, tab3 = st.tabs(
         [
-            "📷 الحضور",
+            "📷 تسجيل الحضور",
             "👤 حسابي",
-            "📋 سجلي",
+            "📋 سجل الحضور",
         ]
     )
 
-    with t1:
+    with tab1:
         student_attendance(student)
 
-    with t2:
+    with tab2:
         student_profile(student)
 
-    with t3:
+    with tab3:
         student_history(student)
 
     st.divider()
 
     if st.button(
-        "🚪 تسجيل خروج",
+        "🚪 تسجيل خروج الطالب",
         use_container_width=True,
         key="student_logout",
     ):
@@ -1374,11 +1402,11 @@ def teacher_login():
 
     header(
         "🎓 منصة الحضور",
-        "👨‍🏫 لوحة المدرس",
+        "👨‍🏫 لوحة تحكم المدرس",
     )
 
     password = st.text_input(
-        "🔐 كلمة المرور",
+        "🔐 كلمة مرور المدرس",
         type="password",
         key="teacher_login_password",
     )
@@ -1386,6 +1414,7 @@ def teacher_login():
     if st.button(
         "👨‍🏫 دخول المدرس",
         use_container_width=True,
+        key="teacher_login_button",
     ):
 
         if password == get_teacher_password():
@@ -1411,8 +1440,12 @@ def change_password():
         "🔐 تغيير كلمة مرور المدرس"
     )
 
+    st.info(
+        "يمكنك تغيير كلمة المرور وحفظها داخل قاعدة بيانات التطبيق."
+    )
+
     with st.form(
-        "password_form"
+        "change_password_form"
     ):
 
         old = st.text_input(
@@ -1426,12 +1459,12 @@ def change_password():
         )
 
         confirm = st.text_input(
-            "🔁 تأكيد كلمة المرور",
+            "🔁 تأكيد كلمة المرور الجديدة",
             type="password",
         )
 
         save = st.form_submit_button(
-            "💾 حفظ",
+            "💾 حفظ كلمة المرور",
             use_container_width=True,
         )
 
@@ -1465,13 +1498,13 @@ def change_password():
     if set_teacher_password(new):
 
         st.success(
-            "✅ تم تغيير كلمة المرور."
+            "✅ تم تغيير كلمة المرور بنجاح."
         )
 
     else:
 
         st.error(
-            "❌ حدث خطأ أثناء الحفظ."
+            "❌ حدث خطأ أثناء حفظ كلمة المرور."
         )
 
 
@@ -1482,39 +1515,42 @@ def change_password():
 def create_lesson():
 
     st.subheader(
-        "➕ إنشاء حصة"
+        "➕ إنشاء حصة جديدة"
     )
 
     grade = st.selectbox(
-        "🎓 الصف",
+        "🎓 اختر الصف",
         GRADES,
-        key="create_grade",
+        key="lesson_grade",
     )
 
     c1, c2 = st.columns(2)
 
     for i, group in enumerate(GROUPS):
 
-        c = group_count(
+        count = group_count(
             grade,
             group,
         )
 
         if i == 0:
+
             c1.metric(
                 group,
-                f"{c}/{GROUP_LIMIT}",
+                f"{count}/{GROUP_LIMIT}",
             )
+
         else:
+
             c2.metric(
                 group,
-                f"{c}/{GROUP_LIMIT}",
+                f"{count}/{GROUP_LIMIT}",
             )
 
     group = st.selectbox(
-        "👥 المجموعة",
+        "👥 اختر المجموعة",
         GROUPS,
-        key="create_group",
+        key="lesson_group",
     )
 
     count = group_count(
@@ -1523,18 +1559,20 @@ def create_lesson():
     )
 
     st.info(
-        f"👨‍🎓 الطلاب: {count}/{GROUP_LIMIT}"
+        f"👨‍🎓 عدد الطلاب: "
+        f"{count}/{GROUP_LIMIT}"
     )
 
     lesson_name = st.text_input(
         "📚 اسم الحصة",
         value="الحصة الحالية",
-        key="create_lesson_name",
+        key="lesson_name",
     )
 
     if st.button(
         "🟢 بدء الحصة",
         use_container_width=True,
+        key="start_lesson",
     ):
 
         if count == 0:
@@ -1565,7 +1603,9 @@ def create_lesson():
                 ),
             )
 
-            token = secrets.token_urlsafe(32)
+            token = secrets.token_urlsafe(
+                32
+            )
 
             cursor = conn.execute(
                 """
@@ -1607,7 +1647,8 @@ def create_lesson():
 
             conn.executemany(
                 """
-                INSERT OR IGNORE INTO lesson_students
+                INSERT OR IGNORE INTO
+                lesson_students
                 (lesson_id, student_id)
                 VALUES (?, ?)
                 """,
@@ -1623,7 +1664,7 @@ def create_lesson():
             conn.commit()
 
             st.success(
-                "🎉 تم بدء الحصة."
+                "🎉 تم بدء الحصة بنجاح."
             )
 
             st.rerun()
@@ -1633,7 +1674,7 @@ def create_lesson():
             conn.rollback()
 
             st.error(
-                f"❌ {exc}"
+                f"❌ حدث خطأ: {exc}"
             )
 
         finally:
@@ -1656,7 +1697,7 @@ def current_lessons():
     if not lessons:
 
         st.info(
-            "⏳ لا توجد حصص مفتوحة."
+            "⏳ لا توجد حصة مفتوحة حالياً."
         )
 
         return
@@ -1672,7 +1713,7 @@ def current_lessons():
     selected = st.selectbox(
         "اختر الحصة",
         labels,
-        key="current_lesson",
+        key="current_lesson_select",
     )
 
     lesson = lessons[
@@ -1707,13 +1748,18 @@ def current_lessons():
                 s.name,
                 s.phone,
                 a.marked_at
+
             FROM lesson_students ls
+
             JOIN students s
             ON s.id = ls.student_id
+
             LEFT JOIN attendance a
             ON a.lesson_id = ls.lesson_id
             AND a.student_id = ls.student_id
+
             WHERE ls.lesson_id = ?
+
             ORDER BY s.name
             """,
             (lesson["id"],),
@@ -1752,12 +1798,25 @@ def current_lessons():
         f"📚 الحصة: **{lesson['lesson_name']}**"
     )
 
+    st.write(
+        f"🕐 بدأت: **{lesson['created_at']}**"
+    )
+
+    st.divider()
+
+    st.subheader(
+        "📷 QR الحضور"
+    )
+
     link = lesson_url(
         lesson["token"]
     )
 
     qr = qrcode.QRCode(
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
+        error_correction=(
+            qrcode.constants
+            .ERROR_CORRECT_H
+        ),
         box_size=12,
         border=5,
     )
@@ -1775,13 +1834,10 @@ def current_lessons():
         format="PNG",
     )
 
-    st.subheader(
-        "📷 QR الحضور"
-    )
-
     st.image(
         buffer.getvalue(),
         width=400,
+        caption="📷 QR الحضور",
     )
 
     st.subheader(
@@ -1793,23 +1849,32 @@ def current_lessons():
         language="text",
     )
 
+    st.subheader(
+        "👨‍🎓 كشف الطلاب"
+    )
+
     table = []
 
     for row in rows:
 
         table.append(
             {
-                "الطالب": row["name"],
-                "الهاتف": row["phone"],
-                "الحالة": (
-                    "✅ حاضر"
-                    if row["marked_at"]
-                    else "⏳ لم يسجل"
-                ),
-                "وقت الحضور": (
+                "الطالب":
+                    row["name"],
+
+                "الهاتف":
+                    row["phone"],
+
+                "الحالة":
+                    (
+                        "✅ حاضر"
+                        if row["marked_at"]
+                        else "⏳ لم يسجل"
+                    ),
+
+                "وقت الحضور":
                     row["marked_at"]
-                    or "-"
-                ),
+                    or "-",
             }
         )
 
@@ -1819,22 +1884,22 @@ def current_lessons():
         hide_index=True,
     )
 
-    c1, c2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
-    with c1:
+    with col1:
 
         if st.button(
-            "🔄 تحديث",
+            "🔄 تحديث الحضور",
             use_container_width=True,
             key=f"refresh_{lesson['id']}",
         ):
 
             st.rerun()
 
-    with c2:
+    with col2:
 
         if st.button(
-            "⛔ إنهاء الحصة",
+            "⛔ إنهاء الحصة وحفظ الغياب",
             use_container_width=True,
             key=f"end_{lesson['id']}",
         ):
@@ -1858,13 +1923,21 @@ def current_lessons():
 
                 conn.commit()
 
+                st.success(
+                    "✅ تم إنهاء الحصة وحفظ الغياب."
+                )
+
+            except Exception as exc:
+
+                conn.rollback()
+
+                st.error(
+                    f"❌ حدث خطأ: {exc}"
+                )
+
             finally:
 
                 conn.close()
-
-            st.success(
-                "✅ تم إنهاء الحصة وحفظ الغياب."
-            )
 
             st.rerun()
 
@@ -1908,7 +1981,8 @@ def reports():
         f"#{x['id']} | "
         f"{x['grade']} | "
         f"{x['group_name']} | "
-        f"{x['lesson_name']}"
+        f"{x['lesson_name']} | "
+        f"{x['created_at']}"
         for x in lessons
     ]
 
@@ -1934,13 +2008,18 @@ def reports():
                 s.grade,
                 s.group_name,
                 a.marked_at
+
             FROM lesson_students ls
+
             JOIN students s
             ON s.id = ls.student_id
+
             LEFT JOIN attendance a
             ON a.lesson_id = ls.lesson_id
             AND a.student_id = ls.student_id
+
             WHERE ls.lesson_id = ?
+
             ORDER BY s.name
             """,
             (lesson["id"],),
@@ -1963,7 +2042,7 @@ def reports():
     c1, c2, c3 = st.columns(3)
 
     c1.metric(
-        "👨‍🎓 الطلاب",
+        "👨‍🎓 إجمالي الطلاب",
         total,
     )
 
@@ -1983,19 +2062,28 @@ def reports():
 
         table.append(
             {
-                "الطالب": row["name"],
-                "الهاتف": row["phone"],
-                "الصف": row["grade"],
-                "المجموعة": row["group_name"],
-                "الحالة": (
-                    "✅ حاضر"
-                    if row["marked_at"]
-                    else "❌ غائب"
-                ),
-                "وقت الحضور": (
+                "الطالب":
+                    row["name"],
+
+                "الهاتف":
+                    row["phone"],
+
+                "الصف":
+                    row["grade"],
+
+                "المجموعة":
+                    row["group_name"],
+
+                "الحالة":
+                    (
+                        "✅ حاضر"
+                        if row["marked_at"]
+                        else "❌ غائب"
+                    ),
+
+                "وقت الحضور":
                     row["marked_at"]
-                    or "-"
-                ),
+                    or "-",
             }
         )
 
@@ -2029,11 +2117,20 @@ def statistics():
 
             table.append(
                 {
-                    "الصف": grade,
-                    "المجموعة": group,
-                    "الطلاب": count,
-                    "السعة": GROUP_LIMIT,
-                    "المتبقي": GROUP_LIMIT - count,
+                    "الصف":
+                        grade,
+
+                    "المجموعة":
+                        group,
+
+                    "الطلاب":
+                        count,
+
+                    "السعة":
+                        GROUP_LIMIT,
+
+                    "المتبقي":
+                        GROUP_LIMIT - count,
                 }
             )
 
@@ -2068,8 +2165,13 @@ def students():
                 grade,
                 group_name,
                 created_at
+
             FROM students
-            ORDER BY grade, group_name, name
+
+            ORDER BY
+                grade,
+                group_name,
+                name
             """
         ).fetchall()
 
@@ -2083,8 +2185,8 @@ def students():
     )
 
     search = st.text_input(
-        "🔎 بحث بالاسم أو الهاتف",
-        key="students_search",
+        "🔎 ابحث بالاسم أو رقم الهاتف",
+        key="student_search",
     ).strip()
 
     filtered = []
@@ -2095,10 +2197,16 @@ def students():
             not search
             or search.lower()
             in row["name"].lower()
-            or search in row["phone"]
+            or search
+            in row["phone"]
         ):
 
             filtered.append(row)
+
+    st.caption(
+        f"عرض {len(filtered)} "
+        f"من {len(rows)} طالب"
+    )
 
     table = []
 
@@ -2106,13 +2214,26 @@ def students():
 
         table.append(
             {
-                "ID": row["id"],
-                "الاسم": row["name"],
-                "الهاتف": row["phone"],
-                "ولي الأمر": row["parent_phone"],
-                "الصف": row["grade"],
-                "المجموعة": row["group_name"],
-                "تاريخ التسجيل": row["created_at"],
+                "ID":
+                    row["id"],
+
+                "الاسم":
+                    row["name"],
+
+                "الهاتف":
+                    row["phone"],
+
+                "ولي الأمر":
+                    row["parent_phone"],
+
+                "الصف":
+                    row["grade"],
+
+                "المجموعة":
+                    row["group_name"],
+
+                "تاريخ التسجيل":
+                    row["created_at"],
             }
         )
 
@@ -2127,7 +2248,7 @@ def students():
     else:
 
         st.info(
-            "📭 لا يوجد طلاب."
+            "📭 لا يوجد طلاب مطابقون للبحث."
         )
 
 
@@ -2158,13 +2279,93 @@ def analytics():
             """
         ).fetchall()
 
-        # -------------------------------------------------
-        # نسبة الحضور حسب الصف
-        # -------------------------------------------------
+        # =================================================
+        # GENERAL NUMBERS
+        # =================================================
 
-        st.markdown(
-            "### 📈 نسبة الحضور حسب الصف"
+        total_students = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM students
+            """
+        ).fetchone()[0]
+
+        total_lessons = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM lessons
+            WHERE active = 0
+            """
+        ).fetchone()[0]
+
+        total_attendance = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM attendance a
+            JOIN lessons l
+            ON l.id = a.lesson_id
+            WHERE l.active = 0
+            """
+        ).fetchone()[0]
+
+        total_records = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM lesson_students ls
+            JOIN lessons l
+            ON l.id = ls.lesson_id
+            WHERE l.active = 0
+            """
+        ).fetchone()[0]
+
+        total_absent = (
+            total_records
+            - total_attendance
         )
+
+    finally:
+
+        conn.close()
+
+    # =====================================================
+    # TOP METRICS
+    # =====================================================
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        "👨‍🎓 الطلاب",
+        total_students,
+    )
+
+    c2.metric(
+        "📚 الحصص المنتهية",
+        total_lessons,
+    )
+
+    c3.metric(
+        "✅ الحضور",
+        total_attendance,
+    )
+
+    c4.metric(
+        "❌ الغياب",
+        total_absent,
+    )
+
+    st.divider()
+
+    # =====================================================
+    # ATTENDANCE BY GRADE
+    # =====================================================
+
+    st.markdown(
+        "### 📈 نسبة الحضور حسب الصف"
+    )
+
+    conn = db()
+
+    try:
 
         grade_table = []
 
@@ -2204,35 +2405,50 @@ def analytics():
 
             grade_table.append(
                 {
-                    "الصف": grade,
-                    "إجمالي الحصص للطلاب": total,
-                    "الحضور": present,
-                    "الغياب": absent,
-                    "نسبة الحضور": (
-                        f"{percentage:.1f}%"
-                    ),
+                    "الصف":
+                        grade,
+
+                    "إجمالي سجلات الحضور":
+                        total,
+
+                    "الحضور":
+                        present,
+
+                    "الغياب":
+                        absent,
+
+                    "نسبة الحضور":
+                        f"{percentage:.1f}%",
                 }
             )
 
-        st.dataframe(
-            grade_table,
-            use_container_width=True,
-            hide_index=True,
-        )
+    finally:
 
-        st.divider()
+        conn.close()
 
-        # -------------------------------------------------
-        # أفضل الطلاب
-        # -------------------------------------------------
+    st.dataframe(
+        grade_table,
+        use_container_width=True,
+        hide_index=True,
+    )
 
-        st.markdown(
-            "### 🏆 أكثر الطلاب حضورًا"
-        )
+    st.divider()
 
-        top_table = []
+    # =====================================================
+    # TOP STUDENTS
+    # =====================================================
 
-        for student in students_rows:
+    st.markdown(
+        "### 🏆 أكثر الطلاب حضورًا"
+    )
+
+    top_table = []
+
+    for student in students_rows:
+
+        conn = db()
+
+        try:
 
             total = conn.execute(
                 """
@@ -2257,68 +2473,88 @@ def analytics():
                 """,
                 (student["id"],),
             ).fetchone()[0]
+
+        finally:
+
+            conn.close()
+
+        if total > 0:
 
             absent = total - present
 
             percentage = (
                 present / total * 100
-                if total
-                else 0
             )
 
-            if total > 0:
+            top_table.append(
+                {
+                    "الطالب":
+                        student["name"],
 
-                top_table.append(
-                    {
-                        "الطالب": student["name"],
-                        "الصف": student["grade"],
-                        "المجموعة": student["group_name"],
-                        "الحضور": present,
-                        "الغياب": absent,
-                        "النسبة": percentage,
-                    }
-                )
+                    "الصف":
+                        student["grade"],
 
-        top_table.sort(
-            key=lambda x: x["النسبة"],
-            reverse=True,
+                    "المجموعة":
+                        student["group_name"],
+
+                    "الحصص":
+                        total,
+
+                    "الحضور":
+                        present,
+
+                    "الغياب":
+                        absent,
+
+                    "النسبة":
+                        percentage,
+                }
+            )
+
+    top_table.sort(
+        key=lambda x: x["النسبة"],
+        reverse=True,
+    )
+
+    top_table = top_table[:10]
+
+    for row in top_table:
+
+        row["النسبة"] = (
+            f"{row['النسبة']:.1f}%"
         )
 
-        top_table = top_table[:10]
+    if top_table:
 
-        for row in top_table:
-
-            row["النسبة"] = (
-                f"{row['النسبة']:.1f}%"
-            )
-
-        if top_table:
-
-            st.dataframe(
-                top_table,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        else:
-
-            st.info(
-                "📭 لا توجد بيانات حضور."
-            )
-
-        st.divider()
-
-        # -------------------------------------------------
-        # أكثر الطلاب غيابًا
-        # -------------------------------------------------
-
-        st.markdown(
-            "### ⚠️ الطلاب أصحاب الغياب الكثير"
+        st.dataframe(
+            top_table,
+            use_container_width=True,
+            hide_index=True,
         )
 
-        absent_table = []
+    else:
 
-        for student in students_rows:
+        st.info(
+            "📭 لا توجد بيانات حضور حتى الآن."
+        )
+
+    st.divider()
+
+    # =====================================================
+    # ABSENT STUDENTS
+    # =====================================================
+
+    st.markdown(
+        "### ⚠️ الطلاب أصحاب الغياب الكثير"
+    )
+
+    absent_table = []
+
+    for student in students_rows:
+
+        conn = db()
+
+        try:
 
             total = conn.execute(
                 """
@@ -2344,67 +2580,88 @@ def analytics():
                 (student["id"],),
             ).fetchone()[0]
 
+        finally:
+
+            conn.close()
+
+        if total > 0:
+
             absent = total - present
 
-            percentage = (
+            absent_percentage = (
                 absent / total * 100
-                if total
-                else 0
             )
 
             if absent > 0:
 
                 absent_table.append(
                     {
-                        "الطالب": student["name"],
-                        "الصف": student["grade"],
-                        "المجموعة": student["group_name"],
-                        "الحصص": total,
-                        "الحضور": present,
-                        "الغياب": absent,
-                        "نسبة الغياب": percentage,
+                        "الطالب":
+                            student["name"],
+
+                        "الصف":
+                            student["grade"],
+
+                        "المجموعة":
+                            student["group_name"],
+
+                        "الحصص":
+                            total,
+
+                        "الحضور":
+                            present,
+
+                        "الغياب":
+                            absent,
+
+                        "نسبة الغياب":
+                            absent_percentage,
                     }
                 )
 
-        absent_table.sort(
-            key=lambda x: (
-                x["الغياب"],
-                x["نسبة الغياب"],
-            ),
-            reverse=True,
+    absent_table.sort(
+        key=lambda x: (
+            x["الغياب"],
+            x["نسبة الغياب"],
+        ),
+        reverse=True,
+    )
+
+    absent_table = absent_table[:20]
+
+    for row in absent_table:
+
+        row["نسبة الغياب"] = (
+            f"{row['نسبة الغياب']:.1f}%"
         )
 
-        absent_table = absent_table[:20]
+    if absent_table:
 
-        for row in absent_table:
-
-            row["نسبة الغياب"] = (
-                f"{row['نسبة الغياب']:.1f}%"
-            )
-
-        if absent_table:
-
-            st.dataframe(
-                absent_table,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        else:
-
-            st.success(
-                "🎉 لا يوجد غياب حتى الآن."
-            )
-
-        st.divider()
-
-        # -------------------------------------------------
-        # المجموعات
-        # -------------------------------------------------
-
-        st.markdown(
-            "### 👥 إحصائيات المجموعات"
+        st.dataframe(
+            absent_table,
+            use_container_width=True,
+            hide_index=True,
         )
+
+    else:
+
+        st.success(
+            "🎉 لا يوجد غياب حتى الآن."
+        )
+
+    st.divider()
+
+    # =====================================================
+    # GROUP ANALYTICS
+    # =====================================================
+
+    st.markdown(
+        "### 👥 إحصائيات المجموعات"
+    )
+
+    conn = db()
+
+    try:
 
         group_table = []
 
@@ -2414,173 +2671,4 @@ def analytics():
 
                 students_count = conn.execute(
                     """
-                    SELECT COUNT(*)
-                    FROM students
-                    WHERE grade = ?
-                    AND group_name = ?
-                    """,
-                    (
-                        grade,
-                        group,
-                    ),
-                ).fetchone()[0]
-
-                total = conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM lesson_students ls
-                    JOIN lessons l
-                    ON l.id = ls.lesson_id
-                    WHERE l.active = 0
-                    AND l.grade = ?
-                    AND l.group_name = ?
-                    """,
-                    (
-                        grade,
-                        group,
-                    ),
-                ).fetchone()[0]
-
-                present = conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM attendance a
-                    JOIN lessons l
-                    ON l.id = a.lesson_id
-                    WHERE l.active = 0
-                    AND l.grade = ?
-                    AND l.group_name = ?
-                    """,
-                    (
-                        grade,
-                        group,
-                    ),
-                ).fetchone()[0]
-
-                absent = total - present
-
-                percentage = (
-                    present / total * 100
-                    if total
-                    else 0
-                )
-
-                group_table.append(
-                    {
-                        "الصف": grade,
-                        "المجموعة": group,
-                        "الطلاب": students_count,
-                        "المتبقي": (
-                            GROUP_LIMIT
-                            - students_count
-                        ),
-                        "الحضور": present,
-                        "الغياب": absent,
-                        "نسبة الحضور": (
-                            f"{percentage:.1f}%"
-                        ),
-                    }
-                )
-
-        st.dataframe(
-            group_table,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.divider()
-
-        # -------------------------------------------------
-        # البحث عن طالب
-        # -------------------------------------------------
-
-        st.markdown(
-            "### 🔎 البحث عن طالب"
-        )
-
-        search = st.text_input(
-            "اكتب اسم الطالب أو رقم الهاتف",
-            key="analytics_search",
-        ).strip()
-
-        if search:
-
-            matches = []
-
-            for student in students_rows:
-
-                if (
-                    search.lower()
-                    in student["name"].lower()
-                    or search
-                    in student["phone"]
-                ):
-
-                    matches.append(student)
-
-            if not matches:
-
-                st.warning(
-                    "❌ لم يتم العثور على الطالب."
-                )
-
-            else:
-
-                options = []
-
-                for student in matches:
-
-                    options.append(
-                        f"{student['name']} | "
-                        f"{student['grade']} | "
-                        f"{student['group_name']}"
-                    )
-
-                selected = st.selectbox(
-                    "اختر الطالب",
-                    options,
-                    key="analytics_selected_student",
-                )
-
-                index = options.index(
-                    selected
-                )
-
-                selected_student = matches[index]
-
-                st.success(
-                    f"""
-👨‍🎓 الاسم: {selected_student['name']}
-
-🎓 الصف: {selected_student['grade']}
-
-👥 المجموعة: {selected_student['group_name']}
-
-📱 الهاتف: {selected_student['phone']}
-                    """
-                )
-
-                total, present, absent, percentage = (
-                    student_stats(
-                        selected_student["id"]
-                    )
-                )
-
-                c1, c2, c3, c4 = st.columns(4)
-
-                c1.metric(
-                    "📚 الحصص",
-                    total,
-                )
-
-                c2.metric(
-                    "✅ الحضور",
-                    present,
-                )
-
-                c3.metric(
-                    "❌ الغياب",
-                    absent,
-                )
-
-                c4
+  
