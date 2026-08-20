@@ -1121,9 +1121,21 @@ def student_profile(student):
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.metric("📚 الحصص", total)
-    c2.metric("✅ الحضور", present)
-    c3.metric("❌ الغياب", absent)
+    c1.metric(
+        "📚 الحصص",
+        total,
+    )
+
+    c2.metric(
+        "✅ الحضور",
+        present,
+    )
+
+    c3.metric(
+        "❌ الغياب",
+        absent,
+    )
+
     c4.metric(
         "📈 النسبة",
         f"{percentage:.1f}%",
@@ -2160,7 +2172,6 @@ def analytics():
 
         # =================================================
         # FEATURE 1
-        # ATTENDANCE PERCENTAGE BY GRADE
         # =================================================
 
         st.markdown(
@@ -2209,9 +2220,7 @@ def analytics():
                     "إجمالي الحضور المتوقع": total,
                     "الحضور": present,
                     "الغياب": absent,
-                    "نسبة الحضور": (
-                        f"{percentage:.1f}%"
-                    ),
+                    "نسبة الحضور": f"{percentage:.1f}%",
                 }
             )
 
@@ -2224,7 +2233,6 @@ def analytics():
         st.divider()
 
         # =================================================
-        # FEATURE 2
         # TOP STUDENTS
         # =================================================
 
@@ -2569,24 +2577,15 @@ def analytics():
                     selected_student["id"]
                 )
 
-                                c1, c2, c3, c4 = st.columns(4)
+                # =================================================
+                # FIXED INDENTATION
+                # =================================================
+
+                c1, c2, c3, c4 = st.columns(4)
 
                 c1.metric(
                     "📚 الحصص",
                     total,
                 )
 
-                c2.metric(
-                    "✅ الحضور",
-                    present,
-                )
-
-                c3.metric(
-                    "❌ الغياب",
-                    absent,
-                )
-
-                c4.metric(
-                    "📈 النسبة",
-                    f"{percentage:.1f}%",
-                )
+                c2.me
