@@ -747,9 +747,7 @@ def mark_attendance(token, student_id):
     finally:
 
         conn.close()
-
-
-# =========================================================
+        # =========================================================
 # STUDENT REGISTER
 # =========================================================
 
@@ -1646,9 +1644,7 @@ def create_lesson():
         finally:
 
             conn.close()
-
-
-# =========================================================
+            # =========================================================
 # CURRENT LESSONS
 # =========================================================
 
@@ -2588,7 +2584,8 @@ def analytics():
 
                 c1, c2, c3, c4 = st.columns(4)
 
-                                    "📚 الحصص",
+                c1.metric(
+                    "📚 الحصص",
                     total,
                 )
 
@@ -2642,9 +2639,7 @@ def analytics():
     finally:
 
         conn.close()
-
-
-# =========================================================
+        # =========================================================
 # TEACHER DASHBOARD
 # =========================================================
 
@@ -2655,85 +2650,102 @@ def teacher_dashboard():
         "👨‍🏫 لوحة تحكم المدرس",
     )
 
-    with st.sidebar:
+    st.success(
+        "✅ تم تسجيل دخول المدرس بنجاح."
+    )
 
-        st.success(
-            "👨‍🏫 تم تسجيل دخول المدرس"
-        )
+    menu = st.radio(
+        "📋 اختر القسم",
+        [
+            "➕ إنشاء حصة",
+            "📊 الحصص الحالية",
+            "📋 التقارير",
+            "📈 إحصائيات الطلاب",
+            "👨‍🎓 الطلاب",
+            "📊 التحليلات المتقدمة",
+            "🔐 تغيير كلمة المرور",
+        ],
+        horizontal=True,
+        key="teacher_menu",
+    )
 
-        page = st.radio(
-            "📌 القائمة",
-            [
-                "➕ إنشاء حصة",
-                "📊 الحصص الحالية",
-                "📋 التقارير",
-                "📈 الإحصائيات",
-                "👨‍🎓 الطلاب",
-                "📊 التحليلات",
-                "🔐 تغيير كلمة المرور",
-            ],
-        )
+    st.divider()
 
-        if st.button(
-            "🚪 تسجيل خروج",
-            use_container_width=True,
-            key="teacher_logout",
-        ):
-
-            st.session_state.teacher = False
-
-            st.query_params.clear()
-
-            st.rerun()
-
-    if page == "➕ إنشاء حصة":
+    if menu == "➕ إنشاء حصة":
 
         create_lesson()
 
-    elif page == "📊 الحصص الحالية":
+    elif menu == "📊 الحصص الحالية":
 
         current_lessons()
 
-    elif page == "📋 التقارير":
+    elif menu == "📋 التقارير":
 
         reports()
 
-    elif page == "📈 الإحصائيات":
+    elif menu == "📈 إحصائيات الطلاب":
 
         statistics()
 
-    elif page == "👨‍🎓 الطلاب":
+    elif menu == "👨‍🎓 الطلاب":
 
         students()
 
-    elif page == "📊 التحليلات":
+    elif menu == "📊 التحليلات المتقدمة":
 
         analytics()
 
-    elif page == "🔐 تغيير كلمة المرور":
+    elif menu == "🔐 تغيير كلمة المرور":
 
         change_password()
 
+    st.divider()
+
+    if st.button(
+        "🚪 تسجيل خروج المدرس",
+        use_container_width=True,
+        key="teacher_logout",
+    ):
+
+        st.session_state.pop(
+            "teacher",
+            None,
+        )
+
+        st.query_params.clear()
+
+        st.rerun()
+
 
 # =========================================================
-# HOME
+# HOME PAGE
 # =========================================================
 
-def home():
+def home_page():
 
     header(
         "🎓 منصة الحضور",
-        "نظام إدارة حضور الطلاب",
+        "نظام إدارة الحضور والغياب للطلاب",
     )
 
-    st.write("")
+    st.info(
+        """
+        👋 أهلاً بك في منصة الحضور.
+
+        اختر طريقة الدخول المناسبة لك من الأسفل.
+        """
+    )
 
     c1, c2 = st.columns(2)
 
     with c1:
 
-        st.subheader(
-            "👨‍🎓 للطلاب"
+        st.markdown(
+            "### 👨‍🎓 الطالب"
+        )
+
+        st.write(
+            "تسجيل الدخول أو إنشاء حساب طالب."
         )
 
         if st.button(
@@ -2748,12 +2760,16 @@ def home():
 
     with c2:
 
-        st.subheader(
-            "👨‍🏫 للمدرس"
+        st.markdown(
+            "### 👨‍🏫 المدرس"
+        )
+
+        st.write(
+            "إدارة الطلاب والحصص والحضور والتقارير."
         )
 
         if st.button(
-            "👨‍🏫 لوحة المدرس",
+            "👨‍🏫 دخول المدرس",
             use_container_width=True,
             key="home_teacher",
         ):
@@ -2764,33 +2780,60 @@ def home():
 
 
 # =========================================================
-# MAIN
+# ROUTER
 # =========================================================
 
-init_db()
+def main():
 
-page = st.query_params.get(
-    "page",
-    "home",
-)
+    init_db()
 
-if page == "student":
+    page = st.query_params.get(
+        "page",
+        "home",
+    )
 
-    student_page()
-
-elif page == "teacher":
-
-    if st.session_state.get(
+    teacher_logged = st.session_state.get(
         "teacher",
         False,
-    ):
+    )
 
-        teacher_dashboard()
+    # -----------------------------------------------------
+    # STUDENT
+    # -----------------------------------------------------
 
-    else:
+    if page == "student":
 
-        teacher_login()
+        student_page()
 
-else:
+        return
 
-    home()
+    # -----------------------------------------------------
+    # TEACHER
+    # -----------------------------------------------------
+
+    if page == "teacher":
+
+        if teacher_logged:
+
+            teacher_dashboard()
+
+        else:
+
+            teacher_login()
+
+        return
+
+    # -----------------------------------------------------
+    # DEFAULT
+    # -----------------------------------------------------
+
+    home_page()
+
+
+# =========================================================
+# RUN
+# =========================================================
+
+if __name__ == "__main__":
+
+    main()
