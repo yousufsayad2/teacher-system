@@ -54,7 +54,6 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-
     .block-container {
         max-width: 1200px;
         padding-top: 25px;
@@ -73,7 +72,6 @@ st.markdown(
         font-size: 22px;
         margin-bottom: 25px;
     }
-
     </style>
     """,
     unsafe_allow_html=True,
@@ -85,7 +83,6 @@ st.markdown(
 # =========================================================
 
 def db():
-
     conn = sqlite3.connect(
         DB_FILE,
         timeout=30,
@@ -202,7 +199,7 @@ def init_db():
 
 
 # =========================================================
-# BASIC FUNCTIONS
+# BASIC
 # =========================================================
 
 def now():
@@ -430,6 +427,53 @@ def lesson_url(token):
     )
 
 
+def extract_token(value):
+
+    if not value:
+        return None
+
+    value = str(value).strip()
+
+    if not value:
+        return None
+
+    if (
+        "://" not in value
+        and "lesson=" not in value
+    ):
+
+        return value
+
+    try:
+
+        result = parse_qs(
+            urlparse(value).query
+        ).get("lesson")
+
+        if result:
+
+            return unquote(
+                result[0]
+            ).strip()
+
+    except Exception:
+
+        pass
+
+    match = re.search(
+        r"lesson=([^&#\s]+)",
+        value,
+    )
+
+    if match:
+
+        return unquote(
+            match.group(1)
+        ).strip()
+
+    return None
+
+
 # =========================================================
 # GROUPS
 # =========================================================
@@ -505,53 +549,6 @@ def get_active_lessons():
     finally:
 
         conn.close()
-
-
-def extract_token(value):
-
-    if not value:
-        return None
-
-    value = str(value).strip()
-
-    if not value:
-        return None
-
-    if (
-        "://" not in value
-        and "lesson=" not in value
-    ):
-
-        return value
-
-    try:
-
-        result = parse_qs(
-            urlparse(value).query
-        ).get("lesson")
-
-        if result:
-
-            return unquote(
-                result[0]
-            ).strip()
-
-    except Exception:
-
-        pass
-
-    match = re.search(
-        r"lesson=([^&#\s]+)",
-        value,
-    )
-
-    if match:
-
-        return unquote(
-            match.group(1)
-        ).strip()
-
-    return None
 
 
 # =========================================================
@@ -1544,6 +1541,7 @@ def create_lesson():
     if st.button(
         "🟢 بدء الحصة",
         use_container_width=True,
+        key="start_lesson",
     ):
 
         if count == 0:
@@ -1671,10 +1669,12 @@ def current_lessons():
         return
 
     labels = [
-        f"#{x['id']} | "
-        f"{x['grade']} | "
-        f"{x['group_name']} | "
-        f"{x['lesson_name']}"
+        (
+            f"#{x['id']} | "
+            f"{x['grade']} | "
+            f"{x['group_name']} | "
+            f"{x['lesson_name']}"
+        )
         for x in lessons
     ]
 
@@ -1914,10 +1914,12 @@ def reports():
         return
 
     labels = [
-        f"#{x['id']} | "
-        f"{x['grade']} | "
-        f"{x['group_name']} | "
-        f"{x['lesson_name']}"
+        (
+            f"#{x['id']} | "
+            f"{x['grade']} | "
+            f"{x['group_name']} | "
+            f"{x['lesson_name']}"
+        )
         for x in lessons
     ]
 
@@ -2172,6 +2174,7 @@ def analytics():
 
         # =================================================
         # FEATURE 1
+        # ATTENDANCE BY GRADE
         # =================================================
 
         st.markdown(
@@ -2220,7 +2223,9 @@ def analytics():
                     "إجمالي الحضور المتوقع": total,
                     "الحضور": present,
                     "الغياب": absent,
-                    "نسبة الحضور": f"{percentage:.1f}%",
+                    "نسبة الحضور": (
+                        f"{percentage:.1f}%"
+                    ),
                 }
             )
 
@@ -2233,6 +2238,7 @@ def analytics():
         st.divider()
 
         # =================================================
+        # FEATURE 2
         # TOP STUDENTS
         # =================================================
 
@@ -2319,6 +2325,7 @@ def analytics():
         st.divider()
 
         # =================================================
+        # FEATURE 3
         # ABSENT STUDENTS
         # =================================================
 
@@ -2409,6 +2416,7 @@ def analytics():
         st.divider()
 
         # =================================================
+        # FEATURE 4
         # GROUP STATISTICS
         # =================================================
 
@@ -2501,6 +2509,7 @@ def analytics():
         st.divider()
 
         # =================================================
+        # FEATURE 5
         # SEARCH STUDENT
         # =================================================
 
@@ -2577,10 +2586,6 @@ def analytics():
                     selected_student["id"]
                 )
 
-                # =================================================
-                # FIXED INDENTATION
-                # =================================================
-
                 c1, c2, c3, c4 = st.columns(4)
 
                 c1.metric(
@@ -2588,4 +2593,205 @@ def analytics():
                     total,
                 )
 
-                c2.me
+                c2.metric(
+                    "✅ الحضور",
+                    present,
+                )
+
+                c3.metric(
+                    "❌ الغياب",
+                    absent,
+                )
+
+                c4.metric(
+                    "📈 النسبة",
+                    f"{percentage:.1f}%",
+                )
+
+                history = get_student_history(
+                    selected_student["id"]
+                )
+
+                if history:
+
+                    history_table = []
+
+                    for row in history:
+
+                        history_table.append(
+                            {
+                                "الحصة": row["lesson_name"],
+                                "التاريخ": row["created_at"],
+                                "الحالة": (
+                                    "✅ حاضر"
+                                    if row["marked_at"]
+                                    else "❌ غائب"
+                                ),
+                                "وقت الحضور": (
+                                    row["marked_at"]
+                                    or "-"
+                                ),
+                            }
+                        )
+
+                    st.dataframe(
+                        history_table,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+    finally:
+
+        conn.close()
+
+
+# =========================================================
+# TEACHER DASHBOARD
+# =========================================================
+
+def teacher_dashboard():
+
+    header(
+        "🎓 منصة الحضور",
+        "👨‍🏫 لوحة تحكم المدرس",
+    )
+
+    with st.sidebar:
+
+        st.success(
+            "👨‍🏫 تم تسجيل دخول المدرس"
+        )
+
+        page = st.radio(
+            "📌 القائمة",
+            [
+                "➕ إنشاء حصة",
+                "📊 الحصص الحالية",
+                "📋 التقارير",
+                "📈 الإحصائيات",
+                "👨‍🎓 الطلاب",
+                "📊 التحليلات",
+                "🔐 تغيير كلمة المرور",
+            ],
+        )
+
+        if st.button(
+            "🚪 تسجيل خروج",
+            use_container_width=True,
+            key="teacher_logout",
+        ):
+
+            st.session_state.teacher = False
+
+            st.query_params.clear()
+
+            st.rerun()
+
+    if page == "➕ إنشاء حصة":
+
+        create_lesson()
+
+    elif page == "📊 الحصص الحالية":
+
+        current_lessons()
+
+    elif page == "📋 التقارير":
+
+        reports()
+
+    elif page == "📈 الإحصائيات":
+
+        statistics()
+
+    elif page == "👨‍🎓 الطلاب":
+
+        students()
+
+    elif page == "📊 التحليلات":
+
+        analytics()
+
+    elif page == "🔐 تغيير كلمة المرور":
+
+        change_password()
+
+
+# =========================================================
+# HOME
+# =========================================================
+
+def home():
+
+    header(
+        "🎓 منصة الحضور",
+        "نظام إدارة حضور الطلاب",
+    )
+
+    st.write("")
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+
+        st.subheader(
+            "👨‍🎓 للطلاب"
+        )
+
+        if st.button(
+            "🎓 دخول الطالب",
+            use_container_width=True,
+            key="home_student",
+        ):
+
+            st.query_params["page"] = "student"
+
+            st.rerun()
+
+    with c2:
+
+        st.subheader(
+            "👨‍🏫 للمدرس"
+        )
+
+        if st.button(
+            "👨‍🏫 لوحة المدرس",
+            use_container_width=True,
+            key="home_teacher",
+        ):
+
+            st.query_params["page"] = "teacher"
+
+            st.rerun()
+
+
+# =========================================================
+# MAIN
+# =========================================================
+
+init_db()
+
+page = st.query_params.get(
+    "page",
+    "home",
+)
+
+if page == "student":
+
+    student_page()
+
+elif page == "teacher":
+
+    if st.session_state.get(
+        "teacher",
+        False,
+    ):
+
+        teacher_dashboard()
+
+    else:
+
+        teacher_login()
+
+else:
+
+    home()
