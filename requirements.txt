@@ -1,5 +1,2 @@
 streamlit
-requests
-pypdf
-python-docx
-SpeechRecognition
+qrcode[pil]
