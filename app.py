@@ -327,9 +327,7 @@ def student_url():
 
     if base:
 
-        return (
-            f"{base}?page=student"
-        )
+        return f"{base}?page=student"
 
     return "?page=student"
 
@@ -504,7 +502,6 @@ def decode_qr(image_bytes):
         )
 
         if image is None:
-
             return None
 
         detector = cv2.QRCodeDetector()
@@ -540,15 +537,12 @@ def decode_qr(image_bytes):
                 )
 
                 if value:
-
                     return value.strip()
 
             except Exception:
-
                 pass
 
     except Exception:
-
         pass
 
     return None
@@ -588,11 +582,9 @@ def mark_attendance(
         )
 
     if (
-        student["grade"]
-        != lesson["grade"]
+        student["grade"] != lesson["grade"]
         or
-        student["group_name"]
-        != lesson["group_name"]
+        student["group_name"] != lesson["group_name"]
     ):
 
         return (
@@ -760,7 +752,6 @@ def student_register():
         )
 
     if not submit:
-
         return
 
     name = name.strip()
@@ -798,16 +789,12 @@ def student_register():
 
         if old:
 
-            st.session_state.student_id = (
+            st.session_state.student_id = old["id"]
+
+            st.query_params["page"] = "student"
+
+            st.query_params["student"] = str(
                 old["id"]
-            )
-
-            st.query_params["page"] = (
-                "student"
-            )
-
-            st.query_params["student"] = (
-                str(old["id"])
             )
 
             st.rerun()
@@ -860,16 +847,12 @@ def student_register():
 
         student_id = cursor.lastrowid
 
-        st.session_state.student_id = (
+        st.session_state.student_id = student_id
+
+        st.query_params["page"] = "student"
+
+        st.query_params["student"] = str(
             student_id
-        )
-
-        st.query_params["page"] = (
-            "student"
-        )
-
-        st.query_params["student"] = (
-            str(student_id)
         )
 
         st.success(
@@ -928,7 +911,6 @@ def student_login():
         )
 
     if not submit:
-
         return
 
     phone = clean_phone(phone)
@@ -953,16 +935,12 @@ def student_login():
 
         return
 
-    st.session_state.student_id = (
+    st.session_state.student_id = student["id"]
+
+    st.query_params["page"] = "student"
+
+    st.query_params["student"] = str(
         student["id"]
-    )
-
-    st.query_params["page"] = (
-        "student"
-    )
-
-    st.query_params["student"] = (
-        str(student["id"])
     )
 
     st.rerun()
@@ -1129,21 +1107,9 @@ def student_profile(
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.metric(
-        "📚 الحصص",
-        total,
-    )
-
-    c2.metric(
-        "✅ الحضور",
-        present,
-    )
-
-    c3.metric(
-        "❌ الغياب",
-        absent,
-    )
-
+    c1.metric("📚 الحصص", total)
+    c2.metric("✅ الحضور", present)
+    c3.metric("❌ الغياب", absent)
     c4.metric(
         "📈 النسبة",
         f"{percentage:.1f}%",
@@ -1180,28 +1146,19 @@ def student_history(
 
         table.append(
             {
-                "الحصة":
-                    row["lesson_name"],
-
-                "الصف":
-                    row["grade"],
-
-                "المجموعة":
-                    row["group_name"],
-
-                "تاريخ الحصة":
-                    row["created_at"],
-
-                "الحالة":
-                    (
-                        "✅ حاضر"
-                        if row["marked_at"]
-                        else "❌ غائب"
-                    ),
-
-                "وقت الحضور":
+                "الحصة": row["lesson_name"],
+                "الصف": row["grade"],
+                "المجموعة": row["group_name"],
+                "تاريخ الحصة": row["created_at"],
+                "الحالة": (
+                    "✅ حاضر"
+                    if row["marked_at"]
+                    else "❌ غائب"
+                ),
+                "وقت الحضور": (
                     row["marked_at"]
-                    or "-",
+                    or "-"
+                ),
             }
         )
 
@@ -1357,18 +1314,14 @@ def student_page():
         )
 
         with login_tab:
-
             student_login()
 
         with register_tab:
-
             student_register()
 
         return
 
-    student = get_student(
-        sid
-    )
+    student = get_student(sid)
 
     if not student:
 
@@ -1407,22 +1360,13 @@ def student_page():
     )
 
     with tab1:
-
-        student_attendance_page(
-            student
-        )
+        student_attendance_page(student)
 
     with tab2:
-
-        student_profile(
-            student
-        )
+        student_profile(student)
 
     with tab3:
-
-        student_history(
-            student
-        )
+        student_history(student)
 
     st.divider()
 
@@ -1761,14 +1705,17 @@ def current_lessons():
         f"🕐 **بدأت:** {lesson['created_at']}"
     )
 
+    # -----------------------------------------------------
+    # QR
+    # -----------------------------------------------------
+
     link = lesson_url(
         lesson["token"]
     )
 
     qr = qrcode.QRCode(
         error_correction=(
-            qrcode.constants
-            .ERROR_CORRECT_H
+            qrcode.constants.ERROR_CORRECT_H
         ),
         box_size=12,
         border=5,
@@ -1806,28 +1753,27 @@ def current_lessons():
         language="text",
     )
 
+    # -----------------------------------------------------
+    # STUDENTS
+    # -----------------------------------------------------
+
     table = []
 
     for row in rows:
 
         table.append(
             {
-                "الطالب":
-                    row["name"],
-
-                "الهاتف":
-                    row["phone"],
-
-                "الحالة":
-                    (
-                        "✅ حاضر"
-                        if row["marked_at"]
-                        else "⏳ لم يسجل"
-                    ),
-
-                "وقت الحضور":
+                "الطالب": row["name"],
+                "الهاتف": row["phone"],
+                "الحالة": (
+                    "✅ حاضر"
+                    if row["marked_at"]
+                    else "⏳ لم يسجل"
+                ),
+                "وقت الحضور": (
                     row["marked_at"]
-                    or "-",
+                    or "-"
+                ),
             }
         )
 
@@ -1840,6 +1786,10 @@ def current_lessons():
         use_container_width=True,
         hide_index=True,
     )
+
+    # -----------------------------------------------------
+    # ACTIONS
+    # -----------------------------------------------------
 
     col1, col2 = st.columns(2)
 
@@ -1892,10 +1842,13 @@ def current_lessons():
 
 
 # =========================================================
-# REPORT CSV
+# CSV HELPER
 # =========================================================
 
 def make_csv(rows):
+
+    if not rows:
+        return ""
 
     output = io.StringIO()
 
@@ -1903,24 +1856,18 @@ def make_csv(rows):
         output
     )
 
-    if not rows:
-
-        return ""
-
     headers = list(
         rows[0].keys()
     )
 
-    writer.writerow(
-        headers
-    )
+    writer.writerow(headers)
 
     for row in rows:
 
         writer.writerow(
             [
-                row[h]
-                for h in headers
+                row[header]
+                for header in headers
             ]
         )
 
@@ -2044,35 +1991,47 @@ def reports():
 
     table = []
 
+    csv_rows = []
+
     for row in rows:
+
+        status = (
+            "حاضر"
+            if row["marked_at"]
+            else "غائب"
+        )
 
         table.append(
             {
-                "الطالب":
-                    row["name"],
-
-                "الهاتف":
-                    row["phone"],
-
-                "ولي الأمر":
-                    row["parent_phone"],
-
-                "الصف":
-                    row["grade"],
-
-                "المجموعة":
-                    row["group_name"],
-
-                "الحالة":
-                    (
-                        "✅ حاضر"
-                        if row["marked_at"]
-                        else "❌ غائب"
-                    ),
-
-                "وقت الحضور":
+                "الطالب": row["name"],
+                "الهاتف": row["phone"],
+                "ولي الأمر": row["parent_phone"],
+                "الصف": row["grade"],
+                "المجموعة": row["group_name"],
+                "الحالة": (
+                    "✅ حاضر"
+                    if row["marked_at"]
+                    else "❌ غائب"
+                ),
+                "وقت الحضور": (
                     row["marked_at"]
-                    or "-",
+                    or "-"
+                ),
+            }
+        )
+
+        csv_rows.append(
+            {
+                "الطالب": row["name"],
+                "الهاتف": row["phone"],
+                "ولي الأمر": row["parent_phone"],
+                "الصف": row["grade"],
+                "المجموعة": row["group_name"],
+                "الحالة": status,
+                "وقت الحضور": (
+                    row["marked_at"]
+                    or "-"
+                ),
             }
         )
 
@@ -2081,40 +2040,6 @@ def reports():
         use_container_width=True,
         hide_index=True,
     )
-
-    csv_rows = []
-
-    for row in rows:
-
-        csv_rows.append(
-            {
-                "الطالب":
-                    row["name"],
-
-                "الهاتف":
-                    row["phone"],
-
-                "ولي الأمر":
-                    row["parent_phone"],
-
-                "الصف":
-                    row["grade"],
-
-                "المجموعة":
-                    row["group_name"],
-
-                "الحالة":
-                    (
-                        "حاضر"
-                        if row["marked_at"]
-                        else "غائب"
-                    ),
-
-                "وقت الحضور":
-                    row["marked_at"]
-                    or "-",
-            }
-        )
 
     csv_data = make_csv(
         csv_rows
@@ -2155,20 +2080,13 @@ def statistics():
 
             table.append(
                 {
-                    "الصف":
-                        grade,
-
-                    "المجموعة":
-                        group,
-
-                    "الطلاب":
-                        count,
-
-                    "السعة":
-                        GROUP_LIMIT,
-
-                    "المتبقي":
-                        GROUP_LIMIT - count,
+                    "الصف": grade,
+                    "المجموعة": group,
+                    "الطلاب": count,
+                    "السعة": GROUP_LIMIT,
+                    "المتبقي": (
+                        GROUP_LIMIT - count
+                    ),
                 }
             )
 
@@ -2247,21 +2165,9 @@ def student_details(
 
     c1, c2, c3, c4 = st.columns(4)
 
-    c1.metric(
-        "📚 الحصص",
-        total,
-    )
-
-    c2.metric(
-        "✅ حاضر",
-        present,
-    )
-
-    c3.metric(
-        "❌ غائب",
-        absent,
-    )
-
+    c1.metric("📚 الحصص", total)
+    c2.metric("✅ حاضر", present)
+    c3.metric("❌ غائب", absent)
     c4.metric(
         "📈 النسبة",
         f"{percentage:.1f}%",
@@ -2299,51 +2205,33 @@ def student_details(
 
         table.append(
             {
-                "الحصة":
-                    row["lesson_name"],
-
-                "الصف":
-                    row["grade"],
-
-                "المجموعة":
-                    row["group_name"],
-
-                "التاريخ":
-                    row["created_at"],
-
-                "الحالة":
-                    (
-                        "✅ حاضر"
-                        if row["marked_at"]
-                        else "❌ غائب"
-                    ),
-
-                "وقت الحضور":
+                "الحصة": row["lesson_name"],
+                "الصف": row["grade"],
+                "المجموعة": row["group_name"],
+                "التاريخ": row["created_at"],
+                "الحالة": (
+                    "✅ حاضر"
+                    if row["marked_at"]
+                    else "❌ غائب"
+                ),
+                "وقت الحضور": (
                     row["marked_at"]
-                    or "-",
+                    or "-"
+                ),
             }
         )
 
         csv_rows.append(
             {
-                "الحصة":
-                    row["lesson_name"],
-
-                "الصف":
-                    row["grade"],
-
-                "المجموعة":
-                    row["group_name"],
-
-                "التاريخ":
-                    row["created_at"],
-
-                "الحالة":
-                    status,
-
-                "وقت الحضور":
+                "الحصة": row["lesson_name"],
+                "الصف": row["grade"],
+                "المجموعة": row["group_name"],
+                "التاريخ": row["created_at"],
+                "الحالة": status,
+                "وقت الحضور": (
                     row["marked_at"]
-                    or "-",
+                    or "-"
+                ),
             }
         )
 
@@ -2409,7 +2297,10 @@ def edit_student(
 
         parent_phone = st.text_input(
             "👪 رقم هاتف ولي الأمر",
-            value=student["parent_phone"] or "",
+            value=(
+                student["parent_phone"]
+                or ""
+            ),
         )
 
         grade = st.selectbox(
@@ -2426,7 +2317,9 @@ def edit_student(
             "👥 المجموعة",
             GROUPS,
             index=(
-                GROUPS.index(student["group_name"])
+                GROUPS.index(
+                    student["group_name"]
+                )
                 if student["group_name"] in GROUPS
                 else 0
             ),
@@ -2438,12 +2331,13 @@ def edit_student(
         )
 
     if not save:
-
         return
 
     name = name.strip()
     phone = clean_phone(phone)
-    parent_phone = clean_phone(parent_phone)
+    parent_phone = clean_phone(
+        parent_phone
+    )
 
     if not name:
 
@@ -2465,7 +2359,7 @@ def edit_student(
 
     try:
 
-        old_phone = conn.execute(
+        duplicate = conn.execute(
             """
             SELECT id
             FROM students
@@ -2478,7 +2372,7 @@ def edit_student(
             ),
         ).fetchone()
 
-        if old_phone:
+        if duplicate:
 
             st.error(
                 "❌ رقم الهاتف مستخدم لطالب آخر."
@@ -2607,7 +2501,6 @@ def delete_student(
     )
 
     if not confirm:
-
         return
 
     if st.button(
@@ -2651,11 +2544,6 @@ def delete_student(
                 "✅ تم حذف الطالب وسجل حضوره."
             )
 
-            st.session_state.pop(
-                "selected_student_id",
-                None,
-            )
-
             st.rerun()
 
         except Exception as exc:
@@ -2695,9 +2583,7 @@ def students():
                 grade,
                 group_name,
                 created_at
-
             FROM students
-
             ORDER BY
                 grade,
                 group_name,
@@ -2722,6 +2608,10 @@ def students():
 
         return
 
+    # -----------------------------------------------------
+    # SEARCH
+    # -----------------------------------------------------
+
     search = st.text_input(
         "🔎 ابحث بالاسم أو رقم الهاتف",
         key="student_search",
@@ -2733,20 +2623,20 @@ def students():
 
     for row in rows:
 
-        name = (
+        student_name = (
             row["name"]
             or ""
         ).lower()
 
-        phone = (
+        student_phone = (
             row["phone"]
             or ""
         )
 
         if (
             not search
-            or search in name
-            or search in phone
+            or search in student_name
+            or search in student_phone
         ):
 
             filtered.append(row)
@@ -2764,32 +2654,23 @@ def students():
 
         return
 
+    # -----------------------------------------------------
+    # TABLE
+    # -----------------------------------------------------
+
     table = []
 
     for row in filtered:
 
         table.append(
             {
-                "ID":
-                    row["id"],
-
-                "الاسم":
-                    row["name"],
-
-                "الهاتف":
-                    row["phone"],
-
-                "ولي الأمر":
-                    row["parent_phone"],
-
-                "الصف":
-                    row["grade"],
-
-                "المجموعة":
-                    row["group_name"],
-
-                "تاريخ التسجيل":
-                    row["created_at"],
+                "ID": row["id"],
+                "الاسم": row["name"],
+                "الهاتف": row["phone"],
+                "ولي الأمر": row["parent_phone"],
+                "الصف": row["grade"],
+                "المجموعة": row["group_name"],
+                "تاريخ التسجيل": row["created_at"],
             }
         )
 
@@ -2801,11 +2682,17 @@ def students():
 
     st.divider()
 
+    # -----------------------------------------------------
+    # SELECT STUDENT
+    # -----------------------------------------------------
+
     st.subheader(
         "🛠️ إدارة طالب"
     )
 
-    options = {}
+    student_labels = []
+
+    student_ids = {}
 
     for row in filtered:
 
@@ -2815,13 +2702,31 @@ def students():
             f"{row['phone']}"
         )
 
-        options[label] = row["id"]
+        student_labels.append(label)
+
+        student_ids[label] = row["id"]
 
     selected_label = st.selectbox(
         "👨‍🎓 اختر الطالب",
-        list(options.keys()),
+        student_labels,
         key="manage_student_select",
     )
 
-    selected_id = options[
-    
+    selected_id = student_ids[
+        selected_label
+    ]
+
+    # -----------------------------------------------------
+    # ACTION
+    # -----------------------------------------------------
+
+    action = st.radio(
+        "اختر العملية",
+        [
+            "👤 التفاصيل",
+            "✏️ تعديل البيانات",
+            "🗑️ حذف الطالب",
+        ],
+        horizontal=True,
+        key="student_management_action",
+   
