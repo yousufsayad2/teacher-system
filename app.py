@@ -2569,7 +2569,7 @@ def analytics():
                     selected_student["id"]
                 )
 
-                c1, c2, c3, c4 = st.columns(4)
+                                c1, c2, c3, c4 = st.columns(4)
 
                 c1.metric(
                     "📚 الحصص",
@@ -2580,15 +2580,13 @@ def analytics():
                     "✅ الحضور",
                     present,
                 )
+
                 c3.metric(
                     "❌ الغياب",
                     absent,
                 )
 
-                                                c4.metric(
+                c4.metric(
                     "📈 النسبة",
                     f"{percentage:.1f}%",
                 )
-
-    finally:
-        conn.close()
