@@ -54,7 +54,6 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-
     .block-container {
         max-width: 1200px;
         padding-top: 25px;
@@ -95,10 +94,6 @@ def db():
 
     conn.execute(
         "PRAGMA busy_timeout=30000"
-    )
-
-    conn.execute(
-        "PRAGMA foreign_keys=ON"
     )
 
     return conn
@@ -201,7 +196,7 @@ def init_db():
 
 
 # =========================================================
-# BASIC FUNCTIONS
+# BASIC HELPERS
 # =========================================================
 
 def now():
@@ -275,7 +270,6 @@ def set_teacher_password(password):
             INSERT INTO settings
             (key, value)
             VALUES (?, ?)
-
             ON CONFLICT(key)
             DO UPDATE SET value = excluded.value
             """,
@@ -301,7 +295,7 @@ def set_teacher_password(password):
 
 
 # =========================================================
-# STUDENTS
+# STUDENT HELPERS
 # =========================================================
 
 def get_student(student_id):
@@ -375,7 +369,9 @@ def get_student_id():
 
         return None
 
-    if get_student(sid):
+    student = get_student(sid)
+
+    if student:
 
         st.session_state.student_id = sid
 
@@ -385,7 +381,7 @@ def get_student_id():
 
 
 # =========================================================
-# URL
+# URL HELPERS
 # =========================================================
 
 def get_base_url():
@@ -441,7 +437,7 @@ def lesson_url(token):
 
 
 # =========================================================
-# GROUPS
+# GROUP HELPERS
 # =========================================================
 
 def group_count(grade, group):
@@ -469,7 +465,7 @@ def group_count(grade, group):
 
 
 # =========================================================
-# LESSONS
+# LESSON HELPERS
 # =========================================================
 
 def get_lesson_by_token(token):
@@ -531,6 +527,7 @@ def extract_token(value):
         "://" not in value
         and "lesson=" not in value
     ):
+
         return value
 
     try:
@@ -564,7 +561,7 @@ def extract_token(value):
 
 
 # =========================================================
-# QR
+# QR DECODER
 # =========================================================
 
 def decode_qr(image_bytes):
@@ -611,7 +608,9 @@ def decode_qr(image_bytes):
             try:
 
                 value, _, _ = (
-                    detector.detectAndDecode(img)
+                    detector.detectAndDecode(
+                        img
+                    )
                 )
 
                 if value:
@@ -804,7 +803,7 @@ def student_register():
         )
 
         st.info(
-            f"{group}: "
+            f"👥 {group}: "
             f"{group_count(grade, group)}"
             f"/{GROUP_LIMIT}"
         )
@@ -819,7 +818,9 @@ def student_register():
 
     name = name.strip()
     phone = clean_phone(phone)
-    parent_phone = clean_phone(parent_phone)
+    parent_phone = clean_phone(
+        parent_phone
+    )
 
     if not name:
 
@@ -852,9 +853,13 @@ def student_register():
 
         if old:
 
-            st.session_state.student_id = old["id"]
+            st.session_state.student_id = (
+                old["id"]
+            )
 
-            st.query_params["page"] = "student"
+            st.query_params["page"] = (
+                "student"
+            )
 
             st.query_params["student"] = str(
                 old["id"]
@@ -914,9 +919,13 @@ def student_register():
 
         st.session_state.student_id = sid
 
-        st.query_params["page"] = "student"
+        st.query_params["page"] = (
+            "student"
+        )
 
-        st.query_params["student"] = str(sid)
+        st.query_params["student"] = str(
+            sid
+        )
 
         st.rerun()
 
@@ -978,7 +987,9 @@ def student_login():
 
         return
 
-    student = get_student_by_phone(phone)
+    student = get_student_by_phone(
+        phone
+    )
 
     if not student:
 
@@ -988,9 +999,13 @@ def student_login():
 
         return
 
-    st.session_state.student_id = student["id"]
+    st.session_state.student_id = (
+        student["id"]
+    )
 
-    st.query_params["page"] = "student"
+    st.query_params["page"] = (
+        "student"
+    )
 
     st.query_params["student"] = str(
         student["id"]
@@ -1000,7 +1015,7 @@ def student_login():
 
 
 # =========================================================
-# STUDENT STATS
+# STUDENT STATISTICS
 # =========================================================
 
 def student_stats(student_id):
@@ -1037,7 +1052,7 @@ def student_stats(student_id):
 
         percentage = (
             present / total * 100
-            if total
+            if total > 0
             else 0
         )
 
@@ -1067,14 +1082,19 @@ def get_student_history(student_id):
                 l.group_name,
                 l.created_at,
                 a.marked_at
+
             FROM lesson_students ls
+
             JOIN lessons l
             ON l.id = ls.lesson_id
+
             LEFT JOIN attendance a
             ON a.lesson_id = l.id
             AND a.student_id = ls.student_id
+
             WHERE ls.student_id = ?
             AND l.active = 0
+
             ORDER BY l.id DESC
             """,
             (student_id,),
@@ -1100,11 +1120,13 @@ def student_profile(student):
     with c1:
 
         st.write(
-            f"**👨‍🎓 الاسم:** {student['name']}"
+            f"**👨‍🎓 الاسم:** "
+            f"{student['name']}"
         )
 
         st.write(
-            f"**🎓 الصف:** {student['grade']}"
+            f"**🎓 الصف:** "
+            f"{student['grade']}"
         )
 
     with c2:
@@ -1115,7 +1137,8 @@ def student_profile(student):
         )
 
         st.write(
-            f"**📱 الهاتف:** {student['phone']}"
+            f"**📱 الهاتف:** "
+            f"{student['phone']}"
         )
 
     st.divider()
@@ -1125,7 +1148,9 @@ def student_profile(student):
         present,
         absent,
         percentage,
-    ) = student_stats(student["id"])
+    ) = student_stats(
+        student["id"]
+    )
 
     c1, c2, c3, c4 = st.columns(4)
 
@@ -1151,7 +1176,7 @@ def student_profile(student):
 
 
 # =========================================================
-# STUDENT HISTORY
+# STUDENT HISTORY PAGE
 # =========================================================
 
 def student_history(student):
@@ -1234,7 +1259,9 @@ def student_attendance(student):
 
         else:
 
-            token = extract_token(raw)
+            token = extract_token(
+                raw
+            )
 
             ok, message = mark_attendance(
                 token,
@@ -1268,7 +1295,9 @@ def student_attendance(student):
         key="manual_attendance",
     ):
 
-        token = extract_token(manual)
+        token = extract_token(
+            manual
+        )
 
         if not token:
 
@@ -1310,9 +1339,11 @@ def student_page():
         )
 
         with login:
+
             student_login()
 
         with register:
+
             student_register()
 
         return
@@ -1356,13 +1387,22 @@ def student_page():
     )
 
     with t1:
-        student_attendance(student)
+
+        student_attendance(
+            student
+        )
 
     with t2:
-        student_profile(student)
+
+        student_profile(
+            student
+        )
 
     with t3:
-        student_history(student)
+
+        student_history(
+            student
+        )
 
     st.divider()
 
@@ -1509,26 +1549,25 @@ def create_lesson():
 
     c1, c2 = st.columns(2)
 
-    for i, group in enumerate(GROUPS):
+    count1 = group_count(
+        grade,
+        GROUPS[0],
+    )
 
-        count = group_count(
-            grade,
-            group,
-        )
+    count2 = group_count(
+        grade,
+        GROUPS[1],
+    )
 
-        if i == 0:
+    c1.metric(
+        GROUPS[0],
+        f"{count1}/{GROUP_LIMIT}",
+    )
 
-            c1.metric(
-                group,
-                f"{count}/{GROUP_LIMIT}",
-            )
-
-        else:
-
-            c2.metric(
-                group,
-                f"{count}/{GROUP_LIMIT}",
-            )
+    c2.metric(
+        GROUPS[1],
+        f"{count2}/{GROUP_LIMIT}",
+    )
 
     group = st.selectbox(
         "👥 المجموعة",
@@ -1542,7 +1581,8 @@ def create_lesson():
     )
 
     st.info(
-        f"👨‍🎓 الطلاب: {count}/{GROUP_LIMIT}"
+        f"👨‍🎓 الطلاب: "
+        f"{count}/{GROUP_LIMIT}"
     )
 
     lesson_name = st.text_input(
@@ -1554,6 +1594,7 @@ def create_lesson():
     if st.button(
         "🟢 بدء الحصة",
         use_container_width=True,
+        key="start_lesson",
     ):
 
         if count == 0:
@@ -1584,7 +1625,9 @@ def create_lesson():
                 ),
             )
 
-            token = secrets.token_urlsafe(32)
+            token = secrets.token_urlsafe(
+                32
+            )
 
             cursor = conn.execute(
                 """
@@ -1642,7 +1685,7 @@ def create_lesson():
             conn.commit()
 
             st.success(
-                "🎉 تم بدء الحصة."
+                "🎉 تم بدء الحصة بنجاح."
             )
 
             st.rerun()
@@ -1652,7 +1695,7 @@ def create_lesson():
             conn.rollback()
 
             st.error(
-                f"❌ {exc}"
+                f"❌ حدث خطأ: {exc}"
             )
 
         finally:
@@ -1771,12 +1814,18 @@ def current_lessons():
         f"📚 الحصة: **{lesson['lesson_name']}**"
     )
 
+    st.write(
+        f"🕐 البداية: **{lesson['created_at']}**"
+    )
+
     link = lesson_url(
         lesson["token"]
     )
 
     qr = qrcode.QRCode(
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
+        error_correction=(
+            qrcode.constants.ERROR_CORRECT_H
+        ),
         box_size=12,
         border=5,
     )
@@ -2180,7 +2229,7 @@ def analytics():
         ).fetchall()
 
         # =================================================
-        # نسبة الحضور حسب الصف
+        # حضور حسب الصف
         # =================================================
 
         st.markdown(
@@ -2219,14 +2268,14 @@ def analytics():
 
             percentage = (
                 present / total * 100
-                if total
+                if total > 0
                 else 0
             )
 
             grade_table.append(
                 {
                     "الصف": grade,
-                    "إجمالي سجلات الطلاب": total,
+                    "إجمالي السجلات": total,
                     "الحضور": present,
                     "الغياب": absent,
                     "نسبة الحضور": (
@@ -2244,7 +2293,7 @@ def analytics():
         st.divider()
 
         # =================================================
-        # أكثر الطلاب حضورًا
+        # أفضل الطلاب
         # =================================================
 
         st.markdown(
@@ -2283,7 +2332,7 @@ def analytics():
 
             percentage = (
                 present / total * 100
-                if total
+                if total > 0
                 else 0
             )
 
@@ -2369,7 +2418,7 @@ def analytics():
 
             absence_percentage = (
                 absent / total * 100
-                if total
+                if total > 0
                 else 0
             )
 
@@ -2482,7 +2531,7 @@ def analytics():
 
                 percentage = (
                     present / total * 100
-                    if total
+                    if total > 0
                     else 0
                 )
 
@@ -2563,34 +2612,11 @@ def analytics():
                     key="analytics_selected_student",
                 )
 
-                index = options.index(
+                selected_index = options.index(
                     selected
                 )
 
-                selected_student = matches[index]
+                selected_student = matches[
+                    selected_index
+                ]
 
-                st.success(
-                    f"""
-👨‍🎓 الاسم: {selected_student['name']}
-
-🎓 الصف: {selected_student['grade']}
-
-👥 المجموعة: {selected_student['group_name']}
-
-📱 الهاتف: {selected_student['phone']}
-                    """
-                )
-
-                (
-                    total,
-                    present,
-                    absent,
-                    percentage,
-                ) = student_stats(
-                    selected_student["id"]
-                )
-
-                c1, c2, c3, c4 = st.columns(4)
-
-                c1.metric(
-               
