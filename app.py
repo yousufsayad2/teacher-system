@@ -6,7 +6,6 @@ import numpy as np
 import io
 import secrets
 import re
-
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -57,7 +56,7 @@ st.markdown(
     <style>
 
     .block-container {
-        max-width: 1100px;
+        max-width: 1200px;
         padding-top: 25px;
         padding-bottom: 50px;
     }
@@ -97,10 +96,6 @@ def db():
 
     conn.execute(
         "PRAGMA busy_timeout=30000"
-    )
-
-    conn.execute(
-        "PRAGMA foreign_keys=ON"
     )
 
     return conn
@@ -265,45 +260,28 @@ def get_student_id():
         "student_id"
     )
 
-    if sid is not None:
+    if sid is None:
 
-        try:
+        sid = st.query_params.get(
+            "student"
+        )
 
-            sid = int(sid)
+    try:
 
-            if get_student(sid):
+        sid = int(sid)
 
-                return sid
+        if get_student(sid):
 
-        except (
-            TypeError,
-            ValueError,
-        ):
+            st.session_state.student_id = sid
 
-            pass
+            return sid
 
-    sid = st.query_params.get(
-        "student"
-    )
+    except (
+        TypeError,
+        ValueError,
+    ):
 
-    if sid:
-
-        try:
-
-            sid = int(sid)
-
-            if get_student(sid):
-
-                st.session_state.student_id = sid
-
-                return sid
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-
-            pass
+        pass
 
     return None
 
@@ -343,7 +321,9 @@ def student_url():
 
     if base:
 
-        return f"{base}?page=student"
+        return (
+            f"{base}?page=student"
+        )
 
     return "?page=student"
 
@@ -453,13 +433,11 @@ def get_active_lessons():
 def extract_token(value):
 
     if not value:
-
         return None
 
     value = str(value).strip()
 
     if not value:
-
         return None
 
     if (
@@ -471,12 +449,8 @@ def extract_token(value):
 
     try:
 
-        parsed = urlparse(
-            value
-        )
-
         result = parse_qs(
-            parsed.query
+            urlparse(value).query
         ).get(
             "lesson"
         )
@@ -567,11 +541,11 @@ def decode_qr(image_bytes):
 
                 pass
 
-        return None
-
     except Exception:
 
-        return None
+        pass
+
+    return None
 
 
 # =========================================================
@@ -583,9 +557,7 @@ def mark_attendance(
     student_id,
 ):
 
-    token = extract_token(
-        token
-    )
+    token = extract_token(token)
 
     lesson = get_lesson_by_token(
         token
@@ -634,22 +606,6 @@ def mark_attendance(
 
     try:
 
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO
-            lesson_students
-            (
-                lesson_id,
-                student_id
-            )
-            VALUES (?, ?)
-            """,
-            (
-                lesson["id"],
-                student_id,
-            ),
-        )
-
         existing = conn.execute(
             """
             SELECT marked_at
@@ -665,8 +621,6 @@ def mark_attendance(
 
         if existing:
 
-            conn.commit()
-
             return (
                 True,
                 (
@@ -674,6 +628,22 @@ def mark_attendance(
                     f"🕐 {existing['marked_at']}"
                 ),
             )
+
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO
+            lesson_students
+            (
+                lesson_id,
+                student_id
+            )
+            VALUES (?, ?)
+            """,
+            (
+                lesson["id"],
+                student_id,
+            ),
+        )
 
         stamp = now()
 
@@ -834,10 +804,6 @@ def student_register():
                 str(old["id"])
             )
 
-            st.success(
-                "✅ الحساب موجود بالفعل، تم الدخول إليه."
-            )
-
             st.rerun()
 
         count = conn.execute(
@@ -900,10 +866,6 @@ def student_register():
             str(student_id)
         )
 
-        st.success(
-            "🎉 تم تسجيل الطالب بنجاح."
-        )
-
         st.rerun()
 
     except sqlite3.IntegrityError:
@@ -959,9 +921,7 @@ def student_login():
 
         return
 
-    phone = clean_phone(
-        phone
-    )
+    phone = clean_phone(phone)
 
     if len(phone) < 8:
 
@@ -995,10 +955,6 @@ def student_login():
         str(student["id"])
     )
 
-    st.success(
-        "✅ تم تسجيل الدخول."
-    )
-
     st.rerun()
 
 
@@ -1017,7 +973,6 @@ def get_student_attendance(
         return conn.execute(
             """
             SELECT
-                l.id AS lesson_id,
                 l.lesson_name,
                 l.grade,
                 l.group_name,
@@ -1254,11 +1209,7 @@ def student_attendance_page(
     )
 
     st.info(
-        """
-📱 وجّه الكاميرا إلى QR الموجود عند المدرس.
-
-النظام سيحدد الحصة والصف والمجموعة تلقائياً.
-        """
+        "📱 وجّه الكاميرا إلى QR الموجود عند المدرس."
     )
 
     photo = st.camera_input(
@@ -1275,11 +1226,7 @@ def student_attendance_page(
         if not raw:
 
             st.error(
-                """
-❌ لم يتم قراءة QR.
-
-جرّب تقريب الكاميرا وتحسين الإضاءة.
-                """
+                "❌ لم يتم قراءة QR. جرّب تقريب الكاميرا وتحسين الإضاءة."
             )
 
         else:
@@ -1335,7 +1282,7 @@ def student_attendance_page(
         "🔗 تسجيل الحضور بالرابط"
     )
 
-    manual_link = st.text_input(
+    manual = st.text_input(
         "🔗 الصق رابط الحصة هنا",
         key="manual_lesson_link",
     )
@@ -1347,7 +1294,7 @@ def student_attendance_page(
     ):
 
         token = extract_token(
-            manual_link
+            manual
         )
 
         if not token:
@@ -1382,15 +1329,17 @@ def student_attendance_page(
 
 def student_page():
 
-    student_id = get_student_id()
+    sid = get_student_id()
 
-    if student_id is None:
+    if sid is None:
 
-        login_tab, register_tab = st.tabs(
-            [
-                "🔐 دخول الطالب",
-                "📝 تسجيل لأول مرة",
-            ]
+        login_tab, register_tab = (
+            st.tabs(
+                [
+                    "🔐 دخول الطالب",
+                    "📝 تسجيل لأول مرة",
+                ]
+            )
         )
 
         with login_tab:
@@ -1404,7 +1353,7 @@ def student_page():
         return
 
     student = get_student(
-        student_id
+        sid
     )
 
     if not student:
@@ -1460,8 +1409,6 @@ def student_page():
         student_history(
             student
         )
-
-    st.divider()
 
     if st.button(
         "🚪 تسجيل خروج الطالب",
@@ -1531,22 +1478,13 @@ def create_lesson():
         key="lesson_grade",
     )
 
-    st.write(
-        "👥 عدد الطلاب في مجموعات الصف:"
-    )
-
     cols = st.columns(3)
 
     for i, group in enumerate(GROUPS):
 
-        count = group_count(
-            grade,
-            group,
-        )
-
         cols[i].metric(
             group,
-            f"{count}/{GROUP_LIMIT}",
+            f"{group_count(grade, group)}/{GROUP_LIMIT}",
         )
 
     group = st.selectbox(
@@ -1565,7 +1503,7 @@ def create_lesson():
         f"{count}/{GROUP_LIMIT}"
     )
 
-    lesson_name = st.text_input(
+    name = st.text_input(
         "📚 اسم الحصة",
         value="الحصة الحالية",
         key="lesson_name",
@@ -1580,11 +1518,7 @@ def create_lesson():
         if count == 0:
 
             st.error(
-                """
-❌ لا يوجد طلاب في هذه المجموعة.
-
-سجل الطلاب أولاً.
-                """
+                "❌ لا يوجد طلاب في هذه المجموعة."
             )
 
             return
@@ -1627,7 +1561,7 @@ def create_lesson():
                 VALUES (?, ?, ?, ?, ?, 1)
                 """,
                 (
-                    lesson_name.strip()
+                    name.strip()
                     or "الحصة الحالية",
                     grade,
                     group,
@@ -1638,7 +1572,7 @@ def create_lesson():
 
             lesson_id = cursor.lastrowid
 
-            students_rows = conn.execute(
+            rows = conn.execute(
                 """
                 SELECT id
                 FROM students
@@ -1666,7 +1600,7 @@ def create_lesson():
                         lesson_id,
                         row["id"],
                     )
-                    for row in students_rows
+                    for row in rows
                 ],
             )
 
@@ -1711,16 +1645,13 @@ def current_lessons():
 
         return
 
-    labels = []
-
-    for lesson in lessons:
-
-        labels.append(
-            f"#{lesson['id']} | "
-            f"{lesson['grade']} | "
-            f"{lesson['group_name']} | "
-            f"{lesson['lesson_name']}"
-        )
+    labels = [
+        f"#{x['id']} | "
+        f"{x['grade']} | "
+        f"{x['group_name']} | "
+        f"{x['lesson_name']}"
+        for x in lessons
+    ]
 
     selected = st.selectbox(
         "اختر الحصة",
@@ -1742,9 +1673,7 @@ def current_lessons():
             FROM lesson_students
             WHERE lesson_id = ?
             """,
-            (
-                lesson["id"],
-            ),
+            (lesson["id"],),
         ).fetchone()[0]
 
         present = conn.execute(
@@ -1753,9 +1682,7 @@ def current_lessons():
             FROM attendance
             WHERE lesson_id = ?
             """,
-            (
-                lesson["id"],
-            ),
+            (lesson["id"],),
         ).fetchone()[0]
 
         rows = conn.execute(
@@ -1778,9 +1705,7 @@ def current_lessons():
 
             ORDER BY s.name
             """,
-            (
-                lesson["id"],
-            ),
+            (lesson["id"],),
         ).fetchall()
 
     finally:
@@ -1820,13 +1745,7 @@ def current_lessons():
         f"🕐 **بدأت:** {lesson['created_at']}"
     )
 
-    # =====================================================
     # QR
-    # =====================================================
-
-    st.subheader(
-        "📷 QR الحضور"
-    )
 
     link = lesson_url(
         lesson["token"]
@@ -1841,21 +1760,21 @@ def current_lessons():
         border=5,
     )
 
-    qr.add_data(
-        link
-    )
+    qr.add_data(link)
 
     qr.make(
         fit=True
     )
 
-    qr_image = qr.make_image()
-
     buffer = io.BytesIO()
 
-    qr_image.save(
+    qr.make_image().save(
         buffer,
         format="PNG",
+    )
+
+    st.subheader(
+        "📷 QR الحضور"
     )
 
     st.image(
@@ -1871,14 +1790,6 @@ def current_lessons():
     st.code(
         link,
         language="text",
-    )
-
-    # =====================================================
-    # STUDENTS
-    # =====================================================
-
-    st.subheader(
-        "👨‍🎓 كشف الطلاب"
     )
 
     table = []
@@ -1906,15 +1817,15 @@ def current_lessons():
             }
         )
 
+    st.subheader(
+        "👨‍🎓 كشف الطلاب"
+    )
+
     st.dataframe(
         table,
         use_container_width=True,
         hide_index=True,
     )
-
-    # =====================================================
-    # ACTIONS
-    # =====================================================
 
     col1, col2 = st.columns(2)
 
@@ -1955,13 +1866,13 @@ def current_lessons():
 
                 conn.commit()
 
-                st.success(
-                    "✅ تم إنهاء الحصة."
-                )
-
             finally:
 
                 conn.close()
+
+            st.success(
+                "✅ تم إنهاء الحصة."
+            )
 
             st.rerun()
 
@@ -2001,17 +1912,14 @@ def reports():
 
         return
 
-    labels = []
-
-    for lesson in lessons:
-
-        labels.append(
-            f"#{lesson['id']} | "
-            f"{lesson['grade']} | "
-            f"{lesson['group_name']} | "
-            f"{lesson['lesson_name']} | "
-            f"{lesson['created_at']}"
-        )
+    labels = [
+        f"#{x['id']} | "
+        f"{x['grade']} | "
+        f"{x['group_name']} | "
+        f"{x['lesson_name']} | "
+        f"{x['created_at']}"
+        for x in lessons
+    ]
 
     selected = st.selectbox(
         "اختر الحصة",
@@ -2049,9 +1957,7 @@ def reports():
 
             ORDER BY s.name
             """,
-            (
-                lesson["id"],
-            ),
+            (lesson["id"],),
         ).fetchall()
 
     finally:
@@ -2213,9 +2119,33 @@ def students():
         len(rows),
     )
 
+    search = st.text_input(
+        "🔎 ابحث بالاسم أو رقم الهاتف",
+        key="student_search",
+    )
+
+    search = search.strip()
+
+    filtered = [
+        row
+        for row in rows
+        if (
+            not search
+            or search.lower()
+            in row["name"].lower()
+            or search
+            in row["phone"]
+        )
+    ]
+
+    st.caption(
+        f"عرض {len(filtered)} "
+        f"من {len(rows)} طالب"
+    )
+
     table = []
 
-    for row in rows:
+    for row in filtered:
 
         table.append(
             {
@@ -2242,6 +2172,154 @@ def students():
             }
         )
 
+    st.dataframe(
+        table,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+# =========================================================
+# DASHBOARD
+# =========================================================
+
+def dashboard():
+
+    conn = db()
+
+    try:
+
+        total_students = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM students
+            """
+        ).fetchone()[0]
+
+        total_lessons = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM lessons
+            """
+        ).fetchone()[0]
+
+        active_lessons = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM lessons
+            WHERE active = 1
+            """
+        ).fetchone()[0]
+
+        ended_lessons = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM lessons
+            WHERE active = 0
+            """
+        ).fetchone()[0]
+
+        total_attendance = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM attendance
+            """
+        ).fetchone()[0]
+
+        ended_students = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM lesson_students ls
+
+            JOIN lessons l
+            ON l.id = ls.lesson_id
+
+            WHERE l.active = 0
+            """
+        ).fetchone()[0]
+
+    finally:
+
+        conn.close()
+
+    total_absent = max(
+        0,
+        ended_students - total_attendance,
+    )
+
+    st.subheader(
+        "📊 لوحة التحكم الرئيسية"
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        "👨‍🎓 إجمالي الطلاب",
+        total_students,
+    )
+
+    c2.metric(
+        "📚 إجمالي الحصص",
+        total_lessons,
+    )
+
+    c3.metric(
+        "🟢 حصص مفتوحة",
+        active_lessons,
+    )
+
+    c4.metric(
+        "⛔ حصص منتهية",
+        ended_lessons,
+    )
+
+    c1, c2 = st.columns(2)
+
+    c1.metric(
+        "✅ إجمالي مرات الحضور",
+        total_attendance,
+    )
+
+    c2.metric(
+        "❌ إجمالي الغياب",
+        total_absent,
+    )
+
+    st.divider()
+
+    st.subheader(
+        "📚 توزيع الطلاب"
+    )
+
+    table = []
+
+    for grade in GRADES:
+
+        for group in GROUPS:
+
+            count = group_count(
+                grade,
+                group,
+            )
+
+            if count:
+
+                table.append(
+                    {
+                        "الصف":
+                            grade,
+
+                        "المجموعة":
+                            group,
+
+                        "عدد الطلاب":
+                            count,
+
+                        "المتبقي":
+                            GROUP_LIMIT - count,
+                    }
+                )
+
     if table:
 
         st.dataframe(
@@ -2253,7 +2331,7 @@ def students():
     else:
 
         st.info(
-            "📭 لا يوجد طلاب مسجلون."
+            "📭 لم يتم تسجيل طلاب حتى الآن."
         )
 
 
@@ -2286,8 +2364,9 @@ def teacher_dashboard():
 
         st.rerun()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    tabs = st.tabs(
         [
+            "📊 الرئيسية",
             "➕ إنشاء حصة",
             "📊 الحصص الحالية",
             "📋 التقارير",
@@ -2296,23 +2375,27 @@ def teacher_dashboard():
         ]
     )
 
-    with tab1:
+    with tabs[0]:
+
+        dashboard()
+
+    with tabs[1]:
 
         create_lesson()
 
-    with tab2:
+    with tabs[2]:
 
         current_lessons()
 
-    with tab3:
+    with tabs[3]:
 
         reports()
 
-    with tab4:
+    with tabs[4]:
 
         statistics()
 
-    with tab5:
+    with tabs[5]:
 
         students()
 
