@@ -2588,5 +2588,209 @@ def analytics():
 
                 c1, c2, c3, c4 = st.columns(4)
 
-                c1.metric(
-                    "📚 الحصص
+                                    "📚 الحصص",
+                    total,
+                )
+
+                c2.metric(
+                    "✅ الحضور",
+                    present,
+                )
+
+                c3.metric(
+                    "❌ الغياب",
+                    absent,
+                )
+
+                c4.metric(
+                    "📈 النسبة",
+                    f"{percentage:.1f}%",
+                )
+
+                history = get_student_history(
+                    selected_student["id"]
+                )
+
+                if history:
+
+                    history_table = []
+
+                    for row in history:
+
+                        history_table.append(
+                            {
+                                "الحصة": row["lesson_name"],
+                                "التاريخ": row["created_at"],
+                                "الحالة": (
+                                    "✅ حاضر"
+                                    if row["marked_at"]
+                                    else "❌ غائب"
+                                ),
+                                "وقت الحضور": (
+                                    row["marked_at"]
+                                    or "-"
+                                ),
+                            }
+                        )
+
+                    st.dataframe(
+                        history_table,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+    finally:
+
+        conn.close()
+
+
+# =========================================================
+# TEACHER DASHBOARD
+# =========================================================
+
+def teacher_dashboard():
+
+    header(
+        "🎓 منصة الحضور",
+        "👨‍🏫 لوحة تحكم المدرس",
+    )
+
+    with st.sidebar:
+
+        st.success(
+            "👨‍🏫 تم تسجيل دخول المدرس"
+        )
+
+        page = st.radio(
+            "📌 القائمة",
+            [
+                "➕ إنشاء حصة",
+                "📊 الحصص الحالية",
+                "📋 التقارير",
+                "📈 الإحصائيات",
+                "👨‍🎓 الطلاب",
+                "📊 التحليلات",
+                "🔐 تغيير كلمة المرور",
+            ],
+        )
+
+        if st.button(
+            "🚪 تسجيل خروج",
+            use_container_width=True,
+            key="teacher_logout",
+        ):
+
+            st.session_state.teacher = False
+
+            st.query_params.clear()
+
+            st.rerun()
+
+    if page == "➕ إنشاء حصة":
+
+        create_lesson()
+
+    elif page == "📊 الحصص الحالية":
+
+        current_lessons()
+
+    elif page == "📋 التقارير":
+
+        reports()
+
+    elif page == "📈 الإحصائيات":
+
+        statistics()
+
+    elif page == "👨‍🎓 الطلاب":
+
+        students()
+
+    elif page == "📊 التحليلات":
+
+        analytics()
+
+    elif page == "🔐 تغيير كلمة المرور":
+
+        change_password()
+
+
+# =========================================================
+# HOME
+# =========================================================
+
+def home():
+
+    header(
+        "🎓 منصة الحضور",
+        "نظام إدارة حضور الطلاب",
+    )
+
+    st.write("")
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+
+        st.subheader(
+            "👨‍🎓 للطلاب"
+        )
+
+        if st.button(
+            "🎓 دخول الطالب",
+            use_container_width=True,
+            key="home_student",
+        ):
+
+            st.query_params["page"] = "student"
+
+            st.rerun()
+
+    with c2:
+
+        st.subheader(
+            "👨‍🏫 للمدرس"
+        )
+
+        if st.button(
+            "👨‍🏫 لوحة المدرس",
+            use_container_width=True,
+            key="home_teacher",
+        ):
+
+            st.query_params["page"] = "teacher"
+
+            st.rerun()
+
+
+# =========================================================
+# MAIN
+# =========================================================
+
+init_db()
+
+page = st.query_params.get(
+    "page",
+    "home",
+)
+
+if page == "student":
+
+    student_page()
+
+elif page == "teacher":
+
+    if st.session_state.get(
+        "teacher",
+        False,
+    ):
+
+        teacher_dashboard()
+
+    else:
+
+        teacher_login()
+
+else:
+
+    home()
